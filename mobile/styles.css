@@ -4,8 +4,8 @@
     --ink: #17211f;
     --muted: #65726f;
     --line: #d9e3e0;
-    --brand: #0f766e;
-    --brand-dark: #0b514c;
+    --brand: #f32981;
+    --brand-dark: #c91462;
     --danger: #dc2626;
     --warn: #f59e0b;
 }
@@ -34,7 +34,7 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .topbar p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
 .tabs { position: fixed; z-index: 5; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr); background: #fff; border-top: 1px solid var(--line); padding: 7px 8px calc(7px + env(safe-area-inset-bottom)); }
 .tabs button { background: transparent; color: var(--muted); padding: 9px 4px; font-size: 12px; border-radius: 8px; }
-.tabs button.active { background: #dff4ef; color: var(--brand-dark); }
+.tabs button.active { background: #ffe1ee; color: var(--brand-dark); }
 .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .metric span { color: var(--muted); font-size: 12px; }
 .metric strong { display: block; font-size: 22px; margin-top: 4px; }
