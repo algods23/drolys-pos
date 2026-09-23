@@ -49,14 +49,25 @@ const store = {
 let db = store.read();
 db.expenses = db.expenses || [];
 db.products = db.products.map((product) => ({ ...product, active: product.active !== false }));
-db.orders = db.orders.map((order) => ({ ...order, customer: order.customer || {}, paymentMethod: order.paymentMethod || 'cash' }));
+db.orders = db.orders.map((order) => ({
+    ...order,
+    customer: order.customer || {},
+    paymentMethod: order.paymentMethod || 'cash',
+    amountReceived: Number(order.amountReceived || 0),
+    status: order.status || (order.amountReceived >= order.total ? 'paid' : 'partial'),
+}));
 let user = store.session();
 let tab = 'dashboard';
 let cart = new Map();
 let scheduleDate = tomorrow();
 let reportStart = today();
 let reportEnd = today();
-let selectedOrderId = null;
+let homeStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+let homeEnd = today();
+let cartOpen = false;
+let modalOrderId = null;
+let reportView = 'sales';
+let reportSummaryVisible = false;
 
 function persist() {
     store.write(db);
@@ -67,8 +78,9 @@ function appShell(content) {
         ['dashboard', 'Home'],
         ['pos', 'POS'],
         ['preorders', 'Orders'],
+        ['archived', 'Archived'],
         ['reports', 'Reports'],
-        ['inventory', 'Stock'],
+        ['inventory', 'Products'],
     ].filter(([id]) => id !== 'inventory' || user.role === 'admin');
 
     return `
@@ -100,14 +112,28 @@ function renderLogin(message = '') {
 
 function dashboard() {
     const todayOrders = db.orders.filter((order) => order.createdAt.slice(0, 10) === today());
+    const tomorrowOrders = db.orders.filter((order) => order.scheduledDate === tomorrow() && order.status !== 'delivered');
+    const rangeOrders = db.orders.filter((order) => {
+        const date = order.createdAt.slice(0, 10);
+        return date >= homeStart && date <= homeEnd;
+    });
+    const chartDays = {};
+    rangeOrders.forEach((order) => {
+        const date = order.createdAt.slice(0, 10);
+        chartDays[date] = (chartDays[date] || 0) + order.total;
+    });
+    const chartValues = Object.entries(chartDays).sort(([a], [b]) => a.localeCompare(b));
+    const chartMax = Math.max(...chartValues.map(([, value]) => value), 1);
     return `
         <div class="metric-grid">
             <div class="metric"><span>Today Sales</span><strong>${peso(todayOrders.reduce((s, o) => s + o.total, 0))}</strong></div>
-            <div class="metric"><span>Orders</span><strong>${todayOrders.length}</strong></div>
+            <div class="metric"><span>Today Orders</span><strong>${todayOrders.length}</strong></div>
+            <div class="metric"><span>Tomorrow Orders</span><strong>${tomorrowOrders.length}</strong></div>
         </div>
         <section class="panel stack">
-            <h2>Pre-order summary</h2>
-            <p class="hint">Products are prepared from customer pre-orders. No stock or inventory tracking is used.</p>
+            <h2>Sales chart</h2>
+            <div class="form-grid"><label>From <input type="date" id="homeStart" value="${homeStart}"></label><label>To <input type="date" id="homeEnd" value="${homeEnd}"></label></div>
+            <div class="bar-chart">${chartValues.length ? chartValues.map(([date, value]) => `<div class="bar-column"><span>${peso(value)}</span><div class="bar" style="height:${Math.max(8, value / chartMax * 150)}px"></div><small>${date.slice(5)}</small></div>`).join('') : '<p class="hint">No sales in this range.</p>'}</div>
         </section>`;
 }
 
@@ -124,8 +150,9 @@ function pos() {
                     <small>Available for pre-order</small>
                 </button>`).join('')}
         </div>
-        <section class="cart">
-            <h2>Cart</h2>
+        <div class="cart-action"><button class="cart-toggle" data-action="toggleCart">${cartOpen ? 'Hide cart' : `Open cart${items.length ? ` (${items.length})` : ''}`}</button></div>
+        ${cartOpen ? `<section class="cart">
+            <div class="cart-heading"><h2>Cart</h2><button class="secondary" data-action="toggleCart">Hide</button></div>
             ${items.length ? items.map((item) => `
                 <div class="cart-row">
                     <span>${item.name}<br><small>${peso(item.price)} each</small></span>
@@ -138,16 +165,15 @@ function pos() {
             <label>Payment method <select id="paymentMethod"><option value="cash">Cash</option><option value="gcash">GCash</option></select></label>
             <label>Amount received <input id="amountReceived" type="number" min="0" step="0.01" value="${total}"></label>
             <button style="width:100%;margin-top:10px" data-action="checkout">Save Pre-order</button>
-        </section>`;
+        </section>` : ''}`;
 }
 
 function preorders() {
-    const orders = db.orders.filter((order) => order.mode === 'preorder' && order.scheduledDate >= today());
+    const orders = db.orders.filter((order) => order.mode === 'preorder' && order.status !== 'delivered');
     const requirements = {};
     orders.filter((order) => order.scheduledDate === scheduleDate).forEach((order) => {
         order.items.forEach((item) => requirements[item.name] = (requirements[item.name] || 0) + item.qty);
     });
-    const selectedOrder = db.orders.find((order) => order.id === selectedOrderId);
     return `
         <label>Date <input type="date" id="preorderDate" value="${scheduleDate}"></label>
         <section class="panel stack" style="margin-top:12px">
@@ -156,9 +182,22 @@ function preorders() {
         </section>
         <section class="panel" style="margin-top:12px">
             <h2>Upcoming Pre-orders</h2>
-            <table><tbody>${orders.map((o) => `<tr><td>${o.receipt}<br><small>${o.customer.name || 'No customer name'}</small></td><td>${o.scheduledDate}</td><td><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
+            <table><tbody>${orders.map((o) => `<tr><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.status} · Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small></td><td><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
         </section>
-        ${selectedOrder ? `<section class="panel stack" style="margin-top:12px"><h2>Order details</h2><p><strong>${selectedOrder.customer.name || 'No customer name'}</strong><br>${selectedOrder.customer.contact || 'No contact number'}<br>${selectedOrder.customer.address || 'No address'}</p><p>${selectedOrder.items.map((item) => `${item.name} x ${item.qty}`).join('<br>')}</p><p>${peso(selectedOrder.total)} · ${selectedOrder.paymentMethod}</p></section>` : ''}`;
+        ${orderModal()}`;
+}
+
+function archived() {
+    const orders = db.orders.filter((order) => order.status === 'delivered');
+    return `<section class="panel"><h2>Archived orders</h2><table><tbody>${orders.map((o) => `<tr><td>${o.receipt}<br><small>${o.customer.name || 'No customer name'}</small></td><td>${o.scheduledDate}</td><td><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No archived orders.</td></tr>'}</tbody></table></section>${orderModal()}`;
+}
+
+function orderModal() {
+    const order = db.orders.find((item) => item.id === modalOrderId);
+    if (!order) return '';
+    const balance = Math.max(0, order.total - order.amountReceived);
+    const change = Math.max(0, order.amountReceived - order.total);
+    return `<div class="modal-backdrop"><section class="modal panel stack"><div class="cart-heading"><h2>Order details</h2><button class="secondary" data-action="closeModal">Close</button></div><p><strong>${order.customer.name || 'No customer name'}</strong><br>${order.customer.contact || 'No contact number'}<br>${order.customer.address || 'No address'}</p><p>${order.items.map((item) => `${item.name} x ${item.qty}`).join('<br>')}</p><p>Total: ${peso(order.total)}<br>Received: ${peso(order.amountReceived)}<br>Balance: ${peso(balance)}<br>Change: ${peso(change)}<br>Payment: ${order.paymentMethod}<br>Status: ${order.status}</p><label>Change amount received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="${order.amountReceived}"></label><button data-action="updatePayment" data-order-id="${order.id}">Change payment</button>${order.status !== 'delivered' ? '<button data-action="markDelivered">Mark as delivered</button>' : ''}</section></div>`;
 }
 
 function reports() {
@@ -169,16 +208,17 @@ function reports() {
     const sales = orders.reduce((sum, order) => sum + order.total, 0);
     const expenses = db.expenses || [];
     const expenseTotal = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd).reduce((sum, expense) => sum + expense.amount, 0);
+    const productCounts = {};
+    orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
+    const selectedExpenses = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
     return `
         <label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label>
         <div class="form-grid"><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
-        <div class="metric-grid" style="margin-top:12px">
-            <div class="metric"><span>Sales</span><strong>${peso(sales)}</strong></div>
-            <div class="metric"><span>Expenses</span><strong>${peso(expenseTotal)}</strong></div>
-            <div class="metric"><span>Orders</span><strong>${orders.length}</strong></div>
-        </div>
+        <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
+        ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(o.total)}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}</td><td>${peso(expense.amount)}</td></tr>`).join('') || '<tr><td>No expenses for this range.</td></tr>'}</tbody></table></section>`}
         <section class="panel stack"><h2>Add expense</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount"><button data-action="saveExpense">Save expense</button></section>
-        <section class="panel"><table><tbody>${orders.map((o) => `<tr><td>${o.receipt}<br><small>${o.customer.name || 'No customer name'} · ${o.paymentMethod}</small></td><td>${peso(o.total)}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>`;
+        <button data-action="toggleReportSummary">${reportSummaryVisible ? 'Hide summary' : 'Generate summary'}</button>
+        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expense descriptions</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description}</span><strong>${peso(expense.amount)}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section>` : ''}`;
 }
 
 function inventory() {
@@ -193,13 +233,9 @@ function inventory() {
         </section>
         <section class="panel" style="margin-top:12px">
             <h2>Products</h2>
-            <table><tbody>${db.products.map((p) => `<tr><td>${p.name}<br><small>${p.category}</small></td><td>${peso(p.price)}</td><td><button class="secondary" data-edit-product="${p.id}">Edit</button></td></tr>`).join('')}</tbody></table>
+            <table><tbody>${db.products.map((p) => `<tr><td>${p.name}<br><small>${p.category}</small></td><td>${peso(p.price)}</td><td><button class="secondary" data-edit-product="${p.id}">Edit</button><button class="${p.active ? 'danger' : ''} secondary" data-toggle-product="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button></td></tr>`).join('')}</tbody></table>
         </section>
-        <section class="panel stack" style="margin-top:12px">
-            <h2>Backup / Restore</h2>
-            <button data-action="export">Export Data</button>
-            <label>Import backup <input id="importFile" type="file" accept="application/json"></label>
-        </section>`;
+        `;
 }
 
 function render() {
@@ -207,7 +243,7 @@ function render() {
         renderLogin();
         return;
     }
-    const views = { dashboard, pos, preorders, reports, inventory };
+    const views = { dashboard, pos, preorders, archived, reports, inventory };
     document.getElementById('app').innerHTML = appShell(views[tab]());
 }
 
@@ -224,10 +260,6 @@ function checkout() {
     if (!items.length) return;
     const total = items.reduce((sum, item) => sum + item.price * item.qty, 0);
     const amountReceived = Number(document.getElementById('amountReceived')?.value || 0);
-    if (amountReceived < total) {
-        alert('Amount received is lower than total.');
-        return;
-    }
     db.orders.push({
         id: Date.now(),
         receipt: `DRL-${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`,
@@ -244,11 +276,13 @@ function checkout() {
         paymentMethod: document.getElementById('paymentMethod')?.value || 'cash',
         amountReceived,
         change: amountReceived - total,
+        status: amountReceived >= total ? 'paid' : 'partial',
         createdAt: new Date().toISOString(),
     });
     cart = new Map();
     persist();
     tab = 'reports';
+    cartOpen = false;
     render();
 }
 
@@ -257,6 +291,22 @@ document.addEventListener('click', (event) => {
     if (!target) return;
     if (target.dataset.tab) {
         tab = target.dataset.tab;
+        render();
+    }
+    if (target.dataset.action === 'toggleCart') {
+        cartOpen = !cartOpen;
+        render();
+    }
+    if (target.dataset.action === 'showSales') {
+        reportView = 'sales';
+        render();
+    }
+    if (target.dataset.action === 'showExpenses') {
+        reportView = 'expenses';
+        render();
+    }
+    if (target.dataset.action === 'toggleReportSummary') {
+        reportSummaryVisible = !reportSummaryVisible;
         render();
     }
     if (target.dataset.action === 'login') {
@@ -284,7 +334,27 @@ document.addEventListener('click', (event) => {
         }
     }
     if (target.dataset.order) {
-        selectedOrderId = Number(target.dataset.order);
+        modalOrderId = Number(target.dataset.order);
+        render();
+    }
+    if (target.dataset.action === 'closeModal') {
+        modalOrderId = null;
+        render();
+    }
+    if (target.dataset.action === 'updatePayment') {
+        const order = db.orders.find((item) => item.id === Number(target.dataset.orderId));
+        const amount = Number(document.getElementById('modalAmountReceived').value || 0);
+        order.amountReceived = amount;
+        order.status = amount >= order.total ? 'paid' : 'partial';
+        persist();
+        render();
+    }
+    if (target.dataset.action === 'markDelivered') {
+        const order = db.orders.find((item) => item.id === modalOrderId);
+        order.status = 'delivered';
+        persist();
+        modalOrderId = null;
+        tab = 'archived';
         render();
     }
     if (target.dataset.action === 'checkout') checkout();
@@ -306,19 +376,18 @@ document.addEventListener('click', (event) => {
         document.getElementById('pPrice').value = product.price;
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
+    if (target.dataset.toggleProduct) {
+        const product = db.products.find((item) => item.id === Number(target.dataset.toggleProduct));
+        product.active = !product.active;
+        persist();
+        render();
+    }
     if (target.dataset.action === 'saveExpense') {
         const amount = Number(document.getElementById('expenseAmount').value || 0);
         const description = document.getElementById('expenseDescription').value.trim();
         if (description && amount > 0) db.expenses.push({ id: Date.now(), description, amount, date: today() });
         persist();
         render();
-    }
-    if (target.dataset.action === 'export') {
-        const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = `droolys-mobile-backup-${today()}.json`;
-        link.click();
     }
 });
 
@@ -329,6 +398,14 @@ document.addEventListener('change', (event) => {
     }
     if (event.target.id === 'reportStart') {
         reportStart = event.target.value;
+        render();
+    }
+    if (event.target.id === 'homeStart') {
+        homeStart = event.target.value;
+        render();
+    }
+    if (event.target.id === 'homeEnd') {
+        homeEnd = event.target.value;
         render();
     }
     if (event.target.id === 'reportEnd') {
@@ -342,15 +419,6 @@ document.addEventListener('change', (event) => {
         if (event.target.value !== 'custom') reportStart = date.toISOString().slice(0, 10);
         reportEnd = today();
         render();
-    }
-    if (event.target.id === 'importFile') {
-        const file = event.target.files[0];
-        if (!file) return;
-        file.text().then((text) => {
-            db = JSON.parse(text);
-            persist();
-            render();
-        });
     }
 });
 
