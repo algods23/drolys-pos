@@ -1,0 +1,8 @@
+{
+    "appId": "com.droolys.pos",
+    "appName": "Drooly's POS",
+    "webDir": "mobile",
+    "server": {
+        "androidScheme": "https"
+    }
+}

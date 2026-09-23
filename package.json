@@ -6,7 +6,10 @@
     "scripts": {
         "build": "vite build",
         "dev": "vite",
-        "desktop": "electron ."
+        "desktop": "electron .",
+        "mobile:sync": "cap sync android",
+        "mobile:open": "cap open android",
+        "mobile:build": "cd android && gradlew.bat assembleDebug"
     },
     "devDependencies": {
         "@tailwindcss/forms": "^0.5.2",
@@ -14,6 +17,9 @@
         "alpinejs": "^3.4.2",
         "autoprefixer": "^10.4.2",
         "axios": "^1.11.0",
+        "@capacitor/android": "^7.4.3",
+        "@capacitor/cli": "^7.4.3",
+        "@capacitor/core": "^7.4.3",
         "concurrently": "^9.0.1",
         "electron": "^38.0.0",
         "laravel-vite-plugin": "^2.0.0",
