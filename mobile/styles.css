@@ -89,7 +89,9 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .compact-action { width: auto; justify-self: start; padding: 8px 12px; font-size: 12px; }
 .edit-order, .order-item-editor { gap: 10px; }
 .receipt-status + .compact-action, .compact-action + .compact-action { margin-top: 10px; }
+.order-item-editor + .compact-action { margin-top: 14px; }
 .rider-receipt .edit-order, .rider-receipt .receipt-top-actions .danger { display: none; }
+.rider-receipt .receipt-top-actions { margin-left: auto; }
 .receipt-meta { padding: 10px 0; border-bottom: 1px dashed #9d958a; }
 .receipt-customer { display: grid; gap: 3px; padding: 14px 0; border-bottom: 1px dashed #9d958a; }
 .receipt-customer strong { color: #17211f; font-size: 14px; }
