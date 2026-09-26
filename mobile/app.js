@@ -52,6 +52,8 @@ db.products = db.products.map((product) => ({ ...product, active: product.active
 db.orders = db.orders.map((order) => ({
     ...order,
     customer: order.customer || {},
+    fulfillment: order.fulfillment || 'delivery',
+    scheduledTime: order.scheduledTime || '',
     paymentMethod: order.paymentMethod || 'cash',
     amountReceived: Number(order.amountReceived || 0),
     status: order.status || (order.amountReceived >= order.total ? 'paid' : 'partial'),
@@ -165,15 +167,17 @@ function pos() {
             <div class="total-row"><span>Total</span><strong>${peso(total)}</strong></div>
             <label>Customer name <input id="customerName" placeholder="Customer name"></label>
             <label>Contact number <input id="customerContact" type="tel" placeholder="Contact number"></label>
-            <label>Address <input id="customerAddress" placeholder="Delivery or pickup address"></label>
+            <label>Delivery or pick-up <select id="fulfillment"><option value="delivery">Delivery</option><option value="pickup">Pick-up</option></select></label>
+            <label>Order time <input id="scheduledTime" type="time"></label>
+            <label>Address or pick-up note <input id="customerAddress" placeholder="Address or pick-up note"></label>
             <label>Payment method <select id="paymentMethod"><option value="cash">Cash</option><option value="gcash">GCash</option></select></label>
-            <label>Amount received <input id="amountReceived" type="number" min="0" step="0.01" placeholder="Leave blank if unpaid"></label>
+            <label>Payment received <input id="amountReceived" type="number" min="0" step="0.01" placeholder="Leave blank if unpaid"></label>
             <button style="width:100%;margin-top:10px" data-action="checkout">Order</button>
         </section>` : ''}`;
 }
 
 function preorders() {
-    const orders = db.orders.filter((order) => order.mode === 'preorder' && order.status !== 'delivered');
+    const orders = db.orders.filter((order) => order.mode === 'preorder' && order.status !== 'delivered').sort((a, b) => `${a.scheduledDate}T${a.scheduledTime || '23:59'}`.localeCompare(`${b.scheduledDate}T${b.scheduledTime || '23:59'}`));
     const requirements = {};
     orders.filter((order) => order.scheduledDate === scheduleDate).forEach((order) => {
         order.items.forEach((item) => requirements[item.name] = (requirements[item.name] || 0) + item.qty);
@@ -186,7 +190,7 @@ function preorders() {
         </section>
         <section class="panel" style="margin-top:12px">
             <h2>Orders</h2>
-            <table><tbody>${orders.map((o) => `<tr><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.status} · Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small></td><td><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
+            <table><thead><tr><th>Date / time</th><th>Customer</th><th>Order</th></tr></thead><tbody>${orders.map((o) => `<tr><td><strong>${o.scheduledDate}</strong><br><small>${o.scheduledTime || 'Time not set'}</small></td><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.fulfillment === 'pickup' ? 'Pick-up' : 'Delivery'}</small></td><td><small>${o.status} · Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small><br><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
         </section>
         ${orderModal()}`;
 }
@@ -201,8 +205,8 @@ function orderModal() {
     if (!order) return '';
     const balance = Math.max(0, order.total - order.amountReceived);
     const change = Math.max(0, order.amountReceived - order.total);
-    const paymentInput = balance > 0 ? `<label>Change amount received <input id="modalAmountReceived" type="number" min="0" step="0.01" placeholder="Leave blank if unpaid"></label><button data-action="updatePayment" data-order-id="${order.id}">Change payment</button>` : '';
-    return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><button class="secondary" data-action="closeModal">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${order.status !== 'delivered' ? '<button data-action="markDelivered">Mark as delivered</button>' : ''}</section></div>`;
+    const paymentInput = balance > 0 ? `<label>Change payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="${order.amountReceived || ''}" placeholder="Leave blank if unpaid"></label><button data-action="updatePayment" data-order-id="${order.id}">Update payment</button>` : '';
+    return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><button class="secondary" data-action="closeModal">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${order.status !== 'delivered' ? '<button data-action="markDelivered">Mark as delivered</button>' : ''}</section></div>`;
 }
 
 function reports() {
@@ -219,12 +223,11 @@ function reports() {
     return `
         <label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label>
         <div class="form-grid"><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
-        <section class="panel stack"><h2>Add expense</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount"><button data-action="saveExpense">Save expense</button></section>
+        <section class="panel stack"><h2>Add expense</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount"><button data-action="saveExpense">Save expense</button></section>
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total received</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(o.amountReceived)}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}</td><td>${peso(expense.amount)}</td></tr>`).join('') || '<tr><td>No expenses for this range.</td></tr>'}</tbody></table></section>`}
-        <button data-action="toggleReportSummary">${reportSummaryVisible ? 'Hide summary' : 'Generate summary'}</button>
-        ${reportSummaryVisible ? '<button data-action="shareReportSummary">Create and share JPG</button>' : ''}
-        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expense descriptions</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description}</span><strong>${peso(expense.amount)}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section>` : ''}`;
+        ${reportSummaryVisible ? '' : '<button data-action="toggleReportSummary">Generate summary</button>'}
+        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expense descriptions</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description} · Qty ${expense.quantity || 1}</span><strong>${peso(expense.amount)}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
 }
 
 async function shareReportSummary() {
@@ -264,30 +267,35 @@ async function shareReportSummary() {
     lines.forEach((line, index) => context.fillText(line, 60, 180 + index * 38));
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     const file = new File([blob], `droolys-summary-${reportStart}-to-${reportEnd}.jpg`, { type: 'image/jpeg' });
-    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-        await navigator.share({ title: "Drooly's sales summary", files: [file] });
-        return;
+    if (navigator.share) {
+        if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+            await navigator.share({ title: "Drooly's sales summary", text: `${reportStart} to ${reportEnd}`, files: [file] });
+            return;
+        }
+        await navigator.share({ title: "Drooly's sales summary", text: `${reportStart} to ${reportEnd}. Sales: ${peso(sales)}. Expenses: ${peso(expenseTotal)}. Profit: ${peso(sales - expenseTotal)}.` });
     }
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = file.name;
     link.click();
-    URL.revokeObjectURL(link.href);
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 function inventory() {
     return `
         <section class="panel stack">
-            <h2>Add / Update Product</h2>
+            <div class="section-heading"><h2>Add / Update Product</h2><button class="secondary compact" data-action="toggleProductEditor">Show editor</button></div>
+            <div id="productEditor" class="stack hidden">
             <input id="pId" type="hidden">
             <input id="pName" placeholder="Product name">
             <input id="pCategory" placeholder="Category">
             <input id="pPrice" type="number" placeholder="Price">
             <button data-action="saveProduct">Save Product</button>
+            </div>
         </section>
         <section class="panel" style="margin-top:12px">
             <h2>Products</h2>
-            <table><tbody>${db.products.map((p) => `<tr><td>${p.name}<br><small>${p.category}</small></td><td>${peso(p.price)}</td><td><button class="secondary" data-edit-product="${p.id}">Edit</button><button class="${p.active ? 'danger' : ''} secondary" data-toggle-product="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button></td></tr>`).join('')}</tbody></table>
+            <table><tbody>${db.products.map((p) => `<tr><td>${p.name}<br><small>${p.category}</small></td><td>${peso(p.price)}</td><td><div class="row-actions"><button class="secondary compact" data-edit-product="${p.id}">Edit</button><button class="${p.active ? 'danger' : ''} secondary compact" data-toggle-product="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button><button class="danger compact" data-delete-product="${p.id}">Delete</button></div></td></tr>`).join('')}</tbody></table>
         </section>
         `;
 }
@@ -320,6 +328,8 @@ function checkout() {
         userId: user.id,
         mode: 'preorder',
         scheduledDate: scheduleDate,
+        scheduledTime: document.getElementById('scheduledTime')?.value || '',
+        fulfillment: document.getElementById('fulfillment')?.value || 'delivery',
         items,
         total,
         customer: {
@@ -396,6 +406,16 @@ document.addEventListener('click', (event) => {
         modalOrderId = null;
         render();
     }
+    if (target.dataset.action === 'updateOrder') {
+        const order = db.orders.find((item) => item.id === Number(target.dataset.orderId));
+        order.fulfillment = document.getElementById('modalFulfillment').value;
+        order.scheduledTime = document.getElementById('modalScheduledTime').value;
+        order.customer.name = document.getElementById('modalCustomerName').value.trim();
+        order.customer.contact = document.getElementById('modalCustomerContact').value.trim();
+        order.customer.address = document.getElementById('modalCustomerAddress').value.trim();
+        persist();
+        render();
+    }
     if (target.dataset.action === 'updatePayment') {
         const order = db.orders.find((item) => item.id === Number(target.dataset.orderId));
         const amount = Number(document.getElementById('modalAmountReceived').value || 0);
@@ -423,8 +443,15 @@ document.addEventListener('click', (event) => {
         persist();
         render();
     }
+    if (target.dataset.action === 'toggleProductEditor') {
+        const editor = document.getElementById('productEditor');
+        editor.classList.toggle('hidden');
+        target.textContent = editor.classList.contains('hidden') ? 'Show editor' : 'Hide editor';
+    }
     if (target.dataset.editProduct) {
         const product = db.products.find((item) => item.id === Number(target.dataset.editProduct));
+        document.getElementById('productEditor').classList.remove('hidden');
+        document.querySelector('[data-action="toggleProductEditor"]').textContent = 'Hide editor';
         document.getElementById('pId').value = product.id;
         document.getElementById('pName').value = product.name;
         document.getElementById('pCategory').value = product.category;
@@ -437,10 +464,16 @@ document.addEventListener('click', (event) => {
         persist();
         render();
     }
+    if (target.dataset.deleteProduct) {
+        db.products = db.products.filter((item) => item.id !== Number(target.dataset.deleteProduct));
+        persist();
+        render();
+    }
     if (target.dataset.action === 'saveExpense') {
         const amount = Number(document.getElementById('expenseAmount').value || 0);
         const description = document.getElementById('expenseDescription').value.trim();
-        if (description && amount > 0) db.expenses.push({ id: Date.now(), description, amount, date: today() });
+        const quantity = Number(document.getElementById('expenseQuantity').value || 1);
+        if (description && amount > 0 && quantity > 0) db.expenses.push({ id: Date.now(), description, quantity, amount, date: today() });
         persist();
         render();
     }
