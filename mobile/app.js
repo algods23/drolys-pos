@@ -9,7 +9,7 @@ const tomorrow = () => {
 const seed = {
     users: [
         { id: 1, name: 'Admin', email: 'admin@droolys.local', password: 'password', role: 'admin' },
-        { id: 2, name: 'Cashier', email: 'cashier@droolys.local', password: 'password', role: 'cashier' },
+        { id: 2, name: 'Rider', email: 'cashier@droolys.local', password: 'password', role: 'rider' },
     ],
     categories: ['Burgers', 'Sides', 'Drinks'],
     products: [
@@ -53,6 +53,7 @@ db.expenses = (db.expenses || []).map((expense) => ({
     amount: Number(expense.amount || 0),
 }));
 db.products = db.products.map((product) => ({ ...product, active: product.active !== false }));
+db.users = db.users.map((account) => account.id === 2 ? { ...account, name: 'Rider', role: 'rider' } : account);
 db.orders = db.orders.map((order) => ({
     ...order,
     customer: order.customer || {},
@@ -63,6 +64,7 @@ db.orders = db.orders.map((order) => ({
     status: order.status || (order.amountReceived >= order.total ? 'paid' : 'partial'),
 }));
 let user = store.session();
+if (user?.id === 2) user = { ...user, name: 'Rider', role: 'rider' };
 let tab = 'dashboard';
 let cart = new Map();
 let scheduleDate = tomorrow();
@@ -80,6 +82,23 @@ function calculateExpenseTotal(expense) {
     return Number(expense.quantity || 1) * Number(expense.amount || 0);
 }
 
+function blobAsBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function shareWithAndroid(file, blob, text) {
+    const plugins = window.Capacitor?.Plugins;
+    if (!plugins?.Filesystem || !plugins?.Share) return false;
+    const result = await plugins.Filesystem.writeFile({ path: file.name, data: await blobAsBase64(blob), directory: 'CACHE', recursive: true });
+    await plugins.Share.share({ title: "Drooly's sales summary", text, files: [result.uri], dialogTitle: 'Share sales summary' });
+    return true;
+}
+
 function persist() {
     store.write(db);
 }
@@ -92,7 +111,7 @@ function appShell(content) {
         ['archived', 'Archived'],
         ['reports', 'Reports'],
         ['inventory', 'Products'],
-    ].filter(([id]) => id !== 'inventory' || user.role === 'admin');
+    ].filter(([id]) => user.role === 'rider' ? ['dashboard', 'preorders'].includes(id) : (id !== 'inventory' || user.role === 'admin'));
 
     return `
         <section class="screen">
@@ -116,12 +135,13 @@ function renderLogin(message = '') {
                 <label>Email <input id="email" value="admin@droolys.local" autocomplete="username"></label>
                 <label>Password <input id="password" type="password" value="password" autocomplete="current-password"></label>
                 <button data-action="login">Login</button>
-                <p class="hint">Admin: admin@droolys.local / password<br>Cashier: cashier@droolys.local / password</p>
+                <p class="hint">Admin: admin@droolys.local / password<br>Rider: cashier@droolys.local / password</p>
             </div>
         </section>`;
 }
 
 function dashboard() {
+    if (user.role === 'rider') return riderDashboard();
     const selectedDayOrders = db.orders.filter((order) => order.scheduledDate === homeEnd);
     const tomorrowOrders = db.orders.filter((order) => order.scheduledDate === tomorrow() && order.status !== 'delivered');
     const rangeOrders = db.orders.filter((order) => {
@@ -150,6 +170,13 @@ function dashboard() {
             <div class="form-grid"><label>From <input type="date" id="homeStart" value="${homeStart}"></label><label>To <input type="date" id="homeEnd" value="${homeEnd}"></label></div>
             <div class="bar-chart">${chartValues.length ? chartValues.map(([date, value]) => `<div class="bar-column"><span>${peso(value)}</span><div class="bar" style="height:${Math.max(8, value / chartMax * 150)}px"></div><small>${date.slice(5)}</small></div>`).join('') : '<p class="hint">No sales in this range.</p>'}</div>
         </section>`;
+}
+
+function riderDashboard() {
+    const orders = db.orders.filter((order) => order.scheduledDate === today() && order.status !== 'delivered');
+    const sales = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    const toCollect = orders.reduce((sum, order) => sum + Math.max(0, Number(order.total || 0) - Number(order.amountReceived || 0)), 0);
+    return `<section class="panel stack"><h2>Today's deliveries</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>To collect</span><strong>${peso(toCollect)}</strong></div></div><p class="hint">${orders.length} scheduled order${orders.length === 1 ? '' : 's'} today.</p></section>`;
 }
 
 function pos() {
@@ -186,13 +213,14 @@ function pos() {
 }
 
 function preorders() {
-    const orders = db.orders.filter((order) => order.mode === 'preorder' && order.status !== 'delivered').sort((a, b) => `${a.scheduledDate}T${a.scheduledTime || '23:59'}`.localeCompare(`${b.scheduledDate}T${b.scheduledTime || '23:59'}`));
+    const orders = db.orders.filter((order) => order.mode === 'preorder' && order.status !== 'delivered' && (user.role !== 'rider' || order.scheduledDate === today())).sort((a, b) => `${a.scheduledDate}T${a.scheduledTime || '23:59'}`.localeCompare(`${b.scheduledDate}T${b.scheduledTime || '23:59'}`));
+    const routeDate = user.role === 'rider' ? today() : scheduleDate;
     const requirements = {};
-    orders.filter((order) => order.scheduledDate === scheduleDate).forEach((order) => {
+    orders.filter((order) => order.scheduledDate === routeDate).forEach((order) => {
         order.items.forEach((item) => requirements[item.name] = (requirements[item.name] || 0) + item.qty);
     });
     return `
-        <label>Date <input type="date" id="preorderDate" value="${scheduleDate}"></label>
+        ${user.role === 'rider' ? '<section class="panel"><h2>Today\'s route</h2><p class="hint">Only orders scheduled for today are shown.</p></section>' : `<label>Date <input type="date" id="preorderDate" value="${scheduleDate}"></label>`}
         <section class="panel stack" style="margin-top:12px">
             <h2>Number of items</h2>
             ${Object.keys(requirements).length ? Object.entries(requirements).map(([name, qty]) => `<div class="cart-row"><span>${name}</span><strong>${qty}</strong></div>`).join('') : '<p class="hint">No pre-orders for this date.</p>'}
@@ -201,17 +229,25 @@ function preorders() {
             <h2>Orders</h2>
             <table><thead><tr><th>Date / time</th><th>Customer</th><th>Order</th></tr></thead><tbody>${orders.map((o) => `<tr><td><strong>${o.scheduledDate}</strong><br><small>${o.scheduledTime || 'Time not set'}</small></td><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.fulfillment === 'pickup' ? 'Pick-up' : 'Delivery'}</small></td><td><small>${o.status} · Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small><br><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
         </section>
-        ${orderModal()}`;
+        ${orderModal()}${callClientAction()}`;
 }
 
 function archived() {
     const orders = db.orders.filter((order) => order.status === 'delivered');
-    return `<section class="panel"><h2>Archived orders</h2><table><tbody>${orders.map((o) => `<tr><td>${o.receipt}<br><small>${o.customer.name || 'No customer name'}</small></td><td>${o.scheduledDate}</td><td><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No archived orders.</td></tr>'}</tbody></table></section>${orderModal()}`;
+    return `<section class="panel"><h2>Archived orders</h2><table><tbody>${orders.map((o) => `<tr><td>${o.receipt}<br><small>${o.customer.name || 'No customer name'}</small></td><td>${o.scheduledDate}</td><td><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No archived orders.</td></tr>'}</tbody></table></section>${orderModal()}${callClientAction()}`;
+}
+
+function callClientAction() {
+    if (!modalOrderId) return '';
+    const order = db.orders.find((item) => item.id === modalOrderId);
+    const phone = (order?.customer.contact || '').replace(/[^+\d]/g, '');
+    return phone ? `<a class="call-client floating-call" href="tel:${phone}">Call client</a>` : '';
 }
 
 function orderModal() {
     const order = db.orders.find((item) => item.id === modalOrderId);
     if (!order) return '';
+    const phone = (order.customer.contact || '').replace(/[^+\d]/g, '');
     const balance = Math.max(0, order.total - order.amountReceived);
     const change = Math.max(0, order.amountReceived - order.total);
     const paymentInput = balance > 0 ? `<label>Change payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="${order.amountReceived || ''}" placeholder="Leave blank if unpaid"></label><button data-action="updatePayment" data-order-id="${order.id}">Update payment</button>` : '';
@@ -236,7 +272,7 @@ function reports() {
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total received</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(o.amountReceived)}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}<br><small>${expense.quantity} x ${peso(expense.amount)}</small></td><td>${peso(calculateExpenseTotal(expense))}</td><td><div class="row-actions"><button class="secondary compact" data-edit-expense="${expense.id}">Edit</button><button class="danger compact" data-delete-expense="${expense.id}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
         ${reportSummaryVisible ? '' : '<button data-action="toggleReportSummary">Generate summary</button>'}
-        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expense descriptions</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description} · Qty ${expense.quantity || 1}</span><strong>${peso(expense.amount)}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
+        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expense descriptions</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description} · ${expense.quantity || 1} x ${peso(expense.amount)}</span><strong>${peso(calculateExpenseTotal(expense))}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
 }
 
 async function shareReportSummary() {
@@ -276,12 +312,14 @@ async function shareReportSummary() {
     lines.forEach((line, index) => context.fillText(line, 60, 180 + index * 38));
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     const file = new File([blob], `droolys-summary-${reportStart}-to-${reportEnd}.jpg`, { type: 'image/jpeg' });
+    const shareText = `${reportStart} to ${reportEnd}. Sales: ${peso(sales)}. Expenses: ${peso(expenseTotal)}. Profit: ${peso(sales - expenseTotal)}.`;
+    if (await shareWithAndroid(file, blob, shareText)) return;
     if (navigator.share) {
         if (!navigator.canShare || navigator.canShare({ files: [file] })) {
             await navigator.share({ title: "Drooly's sales summary", text: `${reportStart} to ${reportEnd}`, files: [file] });
             return;
         }
-        await navigator.share({ title: "Drooly's sales summary", text: `${reportStart} to ${reportEnd}. Sales: ${peso(sales)}. Expenses: ${peso(expenseTotal)}. Profit: ${peso(sales - expenseTotal)}.` });
+        await navigator.share({ title: "Drooly's sales summary", text: shareText });
     }
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);

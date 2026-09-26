@@ -11,11 +11,13 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: var(--bg); color: var(--ink); }
+body { margin: 0; font-family: Lato, Arial, Helvetica, sans-serif; background: var(--bg); color: var(--ink); }
 button, input, select { font: inherit; }
 button { border: 0; border-radius: 10px; background: var(--brand); color: #fff; padding: 12px 14px; font-weight: 700; }
 button.secondary { background: #e7efed; color: var(--ink); }
 button.danger { background: var(--danger); }
+button[data-toggle-product] { background: var(--warn); color: var(--ink); }
+button[data-delete-product] { background: #fff; color: var(--danger); border: 1px solid #fca5a5; }
 input, select { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #fff; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 table { width: 100%; border-collapse: collapse; }
@@ -68,13 +70,15 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .hidden { display: none !important; }
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; align-items: end; background: rgba(23, 33, 31, .45); padding: 14px; }
 .modal { width: 100%; max-height: 88vh; overflow: auto; box-shadow: 0 12px 40px rgba(23, 33, 31, .25); }
-.receipt { width: 100%; max-width: 460px; max-height: 88vh; overflow: auto; padding: 22px; background: #fffdf8; color: #17211f; box-shadow: 0 16px 45px rgba(23, 33, 31, .3); border: 1px solid #d8d0c4; border-radius: 4px; font-family: "Courier New", monospace; }
+.receipt { width: 100%; max-width: 460px; max-height: 88vh; overflow: auto; padding: 22px; background: #fffdf8; color: #17211f; box-shadow: 0 16px 45px rgba(23, 33, 31, .3); border: 1px solid #d8d0c4; border-radius: 4px; font-family: Lato, Arial, sans-serif; font-size: 15px; line-height: 1.45; }
 .receipt-top, .receipt-meta, .receipt-line, .receipt-totals div { display: flex; justify-content: space-between; gap: 12px; }
 .receipt-top { align-items: flex-start; border-bottom: 1px dashed #9d958a; padding-bottom: 14px; }
 .receipt-top strong, .receipt-top small { display: block; }
 .receipt-top strong { font-size: 24px; letter-spacing: 1px; }
 .receipt-top small, .receipt-meta, .receipt-customer, .receipt-status { color: #6c665d; font-size: 11px; }
 .receipt-top button { font-family: Arial, Helvetica, sans-serif; }
+.call-client { color: var(--brand-dark); font-weight: 700; text-decoration: none; }
+.floating-call { position: fixed; z-index: 12; right: 24px; bottom: 92px; padding: 12px 16px; border-radius: 999px; background: #16a34a; color: #fff; box-shadow: 0 8px 20px rgba(22, 101, 52, .25); }
 .receipt-meta { padding: 10px 0; border-bottom: 1px dashed #9d958a; }
 .receipt-customer { display: grid; gap: 3px; padding: 14px 0; border-bottom: 1px dashed #9d958a; }
 .receipt-customer strong { color: #17211f; font-size: 14px; }
