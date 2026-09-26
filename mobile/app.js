@@ -59,6 +59,7 @@ db.orders = db.orders.map((order) => ({
     customer: order.customer || {},
     fulfillment: order.fulfillment || 'delivery',
     scheduledTime: order.scheduledTime || '',
+    deliveryFee: Number(order.deliveryFee || 0),
     paymentMethod: order.paymentMethod || 'cash',
     amountReceived: Number(order.amountReceived || 0),
     status: order.status || (order.amountReceived >= order.total ? 'paid' : 'partial'),
@@ -77,6 +78,7 @@ let modalOrderId = null;
 let reportView = 'sales';
 let reportSummaryVisible = false;
 let editingExpenseId = null;
+let checkoutFulfillment = 'delivery';
 
 function calculateExpenseTotal(expense) {
     return Number(expense.quantity || 1) * Number(expense.amount || 0);
@@ -181,7 +183,7 @@ function riderDashboard() {
 
 function pos() {
     const items = [...cart.values()];
-    const total = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+    const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);
     return `
         <label style="margin:10px 0">Schedule date <input type="date" id="scheduleDate" min="${today()}" value="${scheduleDate}"></label>
         <div class="products">
@@ -200,10 +202,12 @@ function pos() {
                     <span>${item.name}<br><small>${peso(item.price)} each</small></span>
                     <div class="qty"><button data-dec="${item.id}">-</button><strong>${item.qty}</strong><button data-inc="${item.id}">+</button></div>
                 </div>`).join('') : '<p class="hint">Tap products to add them.</p>'}
-            <div class="total-row"><span>Total</span><strong>${peso(total)}</strong></div>
-            <label>Customer name <input id="customerName" placeholder="Customer name"></label>
+            <div class="total-row"><span>Subtotal</span><strong id="cartSubtotal">${peso(subtotal)}</strong></div>
+            <div id="deliveryFeeField" class="${checkoutFulfillment === 'delivery' ? '' : 'hidden'}"><label>Delivery fee <input id="deliveryFee" type="number" min="0" step="0.01" value="0" placeholder="Delivery fee"></label></div>
+            <div class="total-row"><span>Payable</span><strong id="cartTotal">${peso(subtotal)}</strong></div>
+            <label>Customer name <input id="customerName" placeholder="Customer name" required></label>
             <label>Contact number <input id="customerContact" type="tel" placeholder="Contact number"></label>
-            <label>Delivery or pick-up <select id="fulfillment"><option value="delivery">Delivery</option><option value="pickup">Pick-up</option></select></label>
+            <label>Delivery or pick-up <select id="fulfillment"><option value="delivery" ${checkoutFulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${checkoutFulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label>
             <label>Order time <input id="scheduledTime" type="time"></label>
             <label>Address or pick-up note <input id="customerAddress" placeholder="Address or pick-up note"></label>
             <label>Payment method <select id="paymentMethod"><option value="cash">Cash</option><option value="gcash">GCash</option></select></label>
@@ -227,7 +231,7 @@ function preorders() {
         </section>
         <section class="panel" style="margin-top:12px">
             <h2>Orders</h2>
-            <table><thead><tr><th>Date / time</th><th>Customer</th><th>Order</th></tr></thead><tbody>${orders.map((o) => `<tr><td><strong>${o.scheduledDate}</strong><br><small>${o.scheduledTime || 'Time not set'}</small></td><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.fulfillment === 'pickup' ? 'Pick-up' : 'Delivery'}</small></td><td><small>${o.status} · Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small><br><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
+            <table><thead><tr><th>Date / time</th><th>Customer</th><th>Order</th></tr></thead><tbody>${orders.map((o) => `<tr><td><strong>${o.scheduledDate}</strong><br><small>${o.scheduledTime || 'Time not set'}</small></td><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.fulfillment === 'pickup' ? 'Pick-up' : 'Delivery'}</small></td><td><small>${o.status} · Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small><br><button class="secondary compact" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
         </section>
         ${orderModal()}${callClientAction()}`;
 }
@@ -241,7 +245,7 @@ function callClientAction() {
     if (!modalOrderId) return '';
     const order = db.orders.find((item) => item.id === modalOrderId);
     const phone = (order?.customer.contact || '').replace(/[^+\d]/g, '');
-    return phone ? `<a class="call-client floating-call" href="tel:${phone}">Call client</a>` : '';
+    return `<div class="floating-order-actions">${phone ? `<a class="call-client" href="tel:${phone}">Call client</a>` : ''}<button class="danger compact" data-action="deleteOrder" data-order-id="${modalOrderId}">Delete order</button></div>`;
 }
 
 function orderModal() {
@@ -287,15 +291,33 @@ async function shareReportSummary() {
     orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
     const canvas = document.createElement('canvas');
     canvas.width = 1200;
-    canvas.height = 900;
+    canvas.height = Math.max(980, 360 + (orders.length + expenses.length + Object.keys(productCounts).length) * 42);
     const context = canvas.getContext('2d');
-    context.fillStyle = '#f4f7f8';
+    context.fillStyle = '#fffdf8';
     context.fillRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = '#d8d0c4';
+    context.lineWidth = 3;
+    context.strokeRect(28, 28, canvas.width - 56, canvas.height - 56);
+    const logo = new Image();
+    logo.src = './droolys-logo.jpg';
+    await new Promise((resolve) => { logo.onload = resolve; logo.onerror = resolve; });
+    if (logo.complete && logo.naturalWidth) context.drawImage(logo, 60, 48, 100, 100);
     context.fillStyle = '#17211f';
-    context.font = 'bold 42px Arial';
-    context.fillText("Drooly's Summary", 60, 75);
-    context.font = '24px Arial';
-    context.fillText(`${reportStart} to ${reportEnd}`, 60, 115);
+    context.font = 'bold 42px Lato, Arial, sans-serif';
+    context.fillText("DROOLY'S", 190, 88);
+    context.font = '22px Lato, Arial, sans-serif';
+    context.fillStyle = '#6c665d';
+    context.fillText('SALES SUMMARY', 190, 122);
+    context.textAlign = 'right';
+    context.fillText(`${reportStart} to ${reportEnd}`, 1140, 122);
+    context.textAlign = 'left';
+    context.strokeStyle = '#9d958a';
+    context.setLineDash([10, 8]);
+    context.beginPath();
+    context.moveTo(60, 170);
+    context.lineTo(1140, 170);
+    context.stroke();
+    context.setLineDash([]);
     const lines = [
         `Whole sales: ${peso(sales)}`,
         `Whole expenses: ${peso(expenseTotal)}`,
@@ -308,8 +330,8 @@ async function shareReportSummary() {
         'Expenses:',
         ...expenses.map((expense) => `${expense.description}: ${expense.quantity} x ${peso(expense.amount)} = ${peso(calculateExpenseTotal(expense))}`),
     ];
-    context.font = '28px Arial';
-    lines.forEach((line, index) => context.fillText(line, 60, 180 + index * 38));
+    context.font = '25px Lato, Arial, sans-serif';
+    lines.forEach((line, index) => context.fillText(line, 60, 225 + index * 38));
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     const file = new File([blob], `droolys-summary-${reportStart}-to-${reportEnd}.jpg`, { type: 'image/jpeg' });
     const shareText = `${reportStart} to ${reportEnd}. Sales: ${peso(sales)}. Expenses: ${peso(expenseTotal)}. Profit: ${peso(sales - expenseTotal)}.`;
@@ -367,7 +389,18 @@ function addToCart(id) {
 function checkout() {
     const items = [...cart.values()];
     if (!items.length) return;
-    const total = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+    const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+    const customerName = document.getElementById('customerName')?.value.trim() || '';
+    if (!customerName) {
+        alert('Customer name is required.');
+        document.getElementById('customerName')?.focus();
+        return;
+    }
+    const fulfillment = document.getElementById('fulfillment')?.value || 'delivery';
+    const deliveryFee = fulfillment === 'delivery' ? Number(document.getElementById('deliveryFee')?.value || 0) : 0;
+    if (deliveryFee < 0) return;
+    const total = subtotal + deliveryFee;
+    if (!confirm(`Create this ${fulfillment === 'delivery' ? 'delivery' : 'pick-up'} order for ${peso(total)}?`)) return;
     const amountReceived = Number(document.getElementById('amountReceived')?.value || 0);
     db.orders.push({
         id: Date.now(),
@@ -376,11 +409,12 @@ function checkout() {
         mode: 'preorder',
         scheduledDate: scheduleDate,
         scheduledTime: document.getElementById('scheduledTime')?.value || '',
-        fulfillment: document.getElementById('fulfillment')?.value || 'delivery',
+        fulfillment,
+        deliveryFee,
         items,
         total,
         customer: {
-            name: document.getElementById('customerName')?.value.trim() || '',
+            name: customerName,
             contact: document.getElementById('customerContact')?.value.trim() || '',
             address: document.getElementById('customerAddress')?.value.trim() || '',
         },
@@ -459,6 +493,7 @@ document.addEventListener('click', (event) => {
     }
     if (target.dataset.action === 'updateOrder') {
         const order = db.orders.find((item) => item.id === Number(target.dataset.orderId));
+        if (!confirm('Save these order changes?')) return;
         order.fulfillment = document.getElementById('modalFulfillment').value;
         order.scheduledTime = document.getElementById('modalScheduledTime').value;
         order.customer.name = document.getElementById('modalCustomerName').value.trim();
@@ -470,6 +505,7 @@ document.addEventListener('click', (event) => {
     if (target.dataset.action === 'updatePayment') {
         const order = db.orders.find((item) => item.id === Number(target.dataset.orderId));
         const amount = Number(document.getElementById('modalAmountReceived').value || 0);
+        if (!confirm(`Update payment received to ${peso(amount)}?`)) return;
         order.amountReceived = amount;
         order.status = amount >= order.total ? 'paid' : 'partial';
         persist();
@@ -477,6 +513,7 @@ document.addEventListener('click', (event) => {
     }
     if (target.dataset.action === 'markDelivered') {
         const order = db.orders.find((item) => item.id === modalOrderId);
+        if (!confirm('Mark this order as delivered?')) return;
         order.status = 'delivered';
         persist();
         modalOrderId = null;
@@ -484,6 +521,13 @@ document.addEventListener('click', (event) => {
         render();
     }
     if (target.dataset.action === 'checkout') checkout();
+    if (target.dataset.action === 'deleteOrder') {
+        if (!confirm('Delete this order permanently?')) return;
+        db.orders = db.orders.filter((item) => item.id !== Number(target.dataset.orderId));
+        modalOrderId = null;
+        persist();
+        render();
+    }
     if (target.dataset.action === 'saveProduct') {
         const id = Number(document.getElementById('pId').value || 0);
         const product = db.products.find((item) => item.id === id) || { id: Date.now(), active: true };
@@ -511,11 +555,13 @@ document.addEventListener('click', (event) => {
     }
     if (target.dataset.toggleProduct) {
         const product = db.products.find((item) => item.id === Number(target.dataset.toggleProduct));
+        if (!confirm(`${product.active ? 'Deactivate' : 'Activate'} ${product.name}?`)) return;
         product.active = !product.active;
         persist();
         render();
     }
     if (target.dataset.deleteProduct) {
+        if (!confirm('Delete this product permanently?')) return;
         db.products = db.products.filter((item) => item.id !== Number(target.dataset.deleteProduct));
         persist();
         render();
@@ -557,6 +603,14 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('change', (event) => {
+    if (event.target.id === 'fulfillment') {
+        checkoutFulfillment = event.target.value;
+        const feeField = document.getElementById('deliveryFeeField');
+        const feeInput = document.getElementById('deliveryFee');
+        if (feeField) feeField.classList.toggle('hidden', checkoutFulfillment !== 'delivery');
+        if (feeInput && checkoutFulfillment !== 'delivery') feeInput.value = '0';
+        updateCartTotal();
+    }
     if (event.target.id === 'scheduleDate' || event.target.id === 'preorderDate') {
         scheduleDate = event.target.value;
         render();
@@ -586,6 +640,17 @@ document.addEventListener('change', (event) => {
         render();
     }
 });
+
+document.addEventListener('input', (event) => {
+    if (event.target.id === 'deliveryFee') updateCartTotal();
+});
+
+function updateCartTotal() {
+    const subtotal = [...cart.values()].reduce((sum, item) => sum + item.price * item.qty, 0);
+    const fee = checkoutFulfillment === 'delivery' ? Number(document.getElementById('deliveryFee')?.value || 0) : 0;
+    const total = document.getElementById('cartTotal');
+    if (total) total.textContent = peso(subtotal + fee);
+}
 
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
