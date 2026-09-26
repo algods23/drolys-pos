@@ -106,6 +106,14 @@ function salesAmount(order) {
     return Number(order.total || 0);
 }
 
+function reportDate(order) {
+    return philippineDate(new Date(order.createdAt));
+}
+
+function reportDateLabel(date) {
+    return new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(`${date}T12:00:00+08:00`));
+}
+
 function blobAsBase64(blob) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -286,7 +294,7 @@ function orderModal() {
     const phone = (order.customer.contact || '').replace(/[^+\d]/g, '');
     const balance = Math.max(0, order.total - order.amountReceived);
     const change = Math.max(0, order.amountReceived - order.total);
-        const paymentInput = balance > 0 ? `<label>Additional payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label><button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : '';
+        const paymentInput = balance > 0 ? `<label>Additional payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label><button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : `<div class="receipt-change"><span>CHANGE</span><strong>${peso(change)}</strong></div>`;
             const itemEditor = orderEditor(order);
             const customerEditor = user.role === 'rider' ? '' : `<section id="orderEditor" class="edit-order stack hidden"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section>`;
             const headerActions = `${user.role === 'rider' ? '' : `<button class="secondary compact" data-action="toggleOrderEditor">Update</button><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button>`}<button class="secondary compact" data-action="closeModal">Close</button>`;
@@ -298,7 +306,7 @@ function orderModal() {
         return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><button class="secondary" data-action="closeModal">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${order.status !== 'delivered' ? '<button class="compact-action" data-action="markDelivered">Mark as delivered</button>' : ''}</section></div>`;
 }
 
-function reports() {
+function legacyReports() {
     const orders = db.orders.filter((order) => {
         const date = order.createdAt.slice(0, 10);
         return date >= reportStart && date <= reportEnd;
@@ -317,6 +325,39 @@ function reports() {
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(salesAmount(o))}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}<br><small>${expense.quantity} x ${peso(expense.amount)}</small></td><td>${peso(calculateExpenseTotal(expense))}</td><td><div class="row-actions"><button class="secondary compact" data-edit-expense="${expense.id}">Edit</button><button class="danger compact" data-delete-expense="${expense.id}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
         ${reportSummaryVisible ? '' : '<button class="compact-action" data-action="toggleReportSummary">Generate summary</button>'}
         ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expense descriptions</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description} · ${expense.quantity || 1} x ${peso(expense.amount)}</span><strong>${peso(calculateExpenseTotal(expense))}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
+}
+
+function reports() {
+    const orders = db.orders.filter((order) => {
+        const date = reportDate(order);
+        return date >= reportStart && date <= reportEnd;
+    });
+    const expenses = db.expenses || [];
+    const selectedExpenses = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
+    const sales = orders.reduce((sum, order) => sum + salesAmount(order), 0);
+    const expenseTotal = selectedExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0);
+    const productCounts = {};
+    orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
+    const salesByDate = orders.reduce((groups, order) => {
+        (groups[reportDate(order)] ||= []).push(order);
+        return groups;
+    }, {});
+    const expensesByDate = selectedExpenses.reduce((groups, expense) => {
+        (groups[expense.date] ||= []).push(expense);
+        return groups;
+    }, {});
+    const salesRows = Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => `<tr><th colspan="2">${reportDateLabel(date)}</th></tr>${dayOrders.map((order) => `<tr><td>${order.customer.name || 'No customer name'}<br><small>${order.paymentMethod}</small></td><td>${peso(salesAmount(order))}</td></tr>`).join('')}`).join('');
+    const expenseRows = Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `<tr><th colspan="3">${reportDateLabel(date)}</th></tr>${dayExpenses.map((expense) => `<tr><td>${expense.description}<br><small>${expense.quantity} x ${peso(expense.amount)}</small></td><td>${peso(calculateExpenseTotal(expense))}</td><td><div class="row-actions"><button class="secondary compact" data-edit-expense="${expense.id}">Edit</button><button class="danger compact" data-delete-expense="${expense.id}">Delete</button></div></td></tr>`).join('')}`).join('');
+    const salesSummary = Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => `<div class="cart-row"><span>${reportDateLabel(date)}</span><strong>${peso(dayOrders.reduce((sum, order) => sum + salesAmount(order), 0))}</strong></div>`).join('');
+    const expenseSummary = Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `<div class="cart-row"><span>${reportDateLabel(date)}</span><strong>${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}</strong></div>`).join('');
+    return `
+        <label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label>
+        <div class="form-grid"><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
+        <section class="panel stack"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount per product"><div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
+        <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
+        ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${salesRows || '<tr><td>No sales for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${expenseRows || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
+        ${reportSummaryVisible ? '' : '<button class="compact-action" data-action="toggleReportSummary">Generate summary</button>'}
+        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Sales by date</h3>${salesSummary || '<p class="hint">No sales recorded.</p>'}<h3>Expenses by date</h3>${expenseSummary || '<p class="hint">No expenses recorded.</p>'}<h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
 }
 
 async function shareReportSummary() {
