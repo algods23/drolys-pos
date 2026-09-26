@@ -89,7 +89,7 @@ let cart = new Map();
 let scheduleDate = tomorrow();
 let reportStart = today();
 let reportEnd = today();
-let homeStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+let homeStart = `${today().slice(0, 8)}01`;
 let homeEnd = today();
 let cartOpen = false;
 let modalOrderId = null;
@@ -169,12 +169,12 @@ function dashboard() {
     const selectedDayOrders = db.orders.filter((order) => order.scheduledDate === homeEnd);
     const tomorrowOrders = db.orders.filter((order) => order.scheduledDate === tomorrow() && order.status !== 'delivered');
     const rangeOrders = db.orders.filter((order) => {
-        const date = order.createdAt.slice(0, 10);
+        const date = philippineDate(new Date(order.createdAt));
         return date >= homeStart && date <= homeEnd;
     });
     const chartDays = {};
     rangeOrders.forEach((order) => {
-        const date = order.createdAt.slice(0, 10);
+        const date = philippineDate(new Date(order.createdAt));
         chartDays[date] = (chartDays[date] || 0) + salesAmount(order);
     });
     const chartValues = Object.entries(chartDays).sort(([a], [b]) => a.localeCompare(b));
@@ -288,9 +288,9 @@ function orderModal() {
     const change = Math.max(0, order.amountReceived - order.total);
         const paymentInput = balance > 0 ? `<label>Additional payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label><button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : '';
             const itemEditor = orderEditor(order);
-            const customerEditor = user.role === 'rider' ? '' : `<section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section>`;
-            const headerActions = `${user.role === 'rider' ? '' : `<button class="secondary compact" data-action="toggleOrderItemsEditor">Update items</button><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button>`}<button class="secondary compact" data-action="closeModal">Close</button>`;
-            const completionAction = order.status !== 'delivered' ? `<button class="compact-action" data-action="${order.fulfillment === 'pickup' ? 'markPickedUp' : 'markDelivered'}">${order.fulfillment === 'pickup' ? 'Confirm pick-up' : 'Mark as delivered'}</button>` : '';
+            const customerEditor = user.role === 'rider' ? '' : `<section id="orderEditor" class="edit-order stack hidden"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section>`;
+            const headerActions = `${user.role === 'rider' ? '' : `<button class="secondary compact" data-action="toggleOrderEditor">Update</button><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button>`}<button class="secondary compact" data-action="closeModal">Close</button>`;
+            const completionAction = order.status !== 'delivered' && Number(order.amountReceived || 0) >= Number(order.total || 0) ? `<button class="compact-action" data-action="${order.fulfillment === 'pickup' ? 'markPickedUp' : 'markDelivered'}">${order.fulfillment === 'pickup' ? 'Confirm pick-up' : 'Mark as delivered'}</button>` : '';
             return `<div class="modal-backdrop"><section class="receipt modal ${user.role === 'rider' ? 'rider-receipt' : ''}"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions">${headerActions}</div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${phone ? `<a class="call-client" href="tel:${phone}">${order.customer.contact}</a>` : 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div>${customerEditor}<div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>SUBTOTAL</span><strong>${peso(order.total - Number(order.deliveryFee || 0))}</strong></div>${order.deliveryFee ? `<div><span>DELIVERY FEE</span><strong>${peso(order.deliveryFee)}</strong></div>` : ''}<div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div></div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${itemEditor}${completionAction}</section></div>`;
             return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions"><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button><button class="secondary" data-action="closeModal">Close</button></div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${completionAction}</section></div>`;
                                 return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions"><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button><button class="secondary" data-action="closeModal">Close</button></div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${completionAction}</section></div>`;
@@ -303,7 +303,7 @@ function reports() {
         const date = order.createdAt.slice(0, 10);
         return date >= reportStart && date <= reportEnd;
     });
-    const sales = orders.reduce((sum, order) => sum + Number(order.amountReceived || 0), 0);
+    const sales = orders.reduce((sum, order) => sum + salesAmount(order), 0);
     const expenses = db.expenses || [];
     const expenseTotal = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd).reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0);
     const productCounts = {};
@@ -321,11 +321,11 @@ function reports() {
 
 async function shareReportSummary() {
     const orders = db.orders.filter((order) => {
-        const date = order.createdAt.slice(0, 10);
+        const date = philippineDate(new Date(order.createdAt));
         return date >= reportStart && date <= reportEnd;
     });
     const expenses = (db.expenses || []).filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
-    const sales = orders.reduce((sum, order) => sum + Number(order.amountReceived || 0), 0);
+    const sales = orders.reduce((sum, order) => sum + salesAmount(order), 0);
     const expenseTotal = expenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0);
     const productCounts = {};
     orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
@@ -444,7 +444,7 @@ function checkout() {
     const amountReceived = Number(document.getElementById('amountReceived')?.value || 0);
     db.orders.push({
         id: Date.now(),
-        receipt: `DRL-${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`,
+        receipt: `DRL-${philippineDate().replace(/-/g, '')}-${String(Date.now()).slice(-4)}`,
         userId: user.id,
         mode: 'preorder',
         scheduledDate: scheduleDate,
@@ -542,9 +542,21 @@ document.addEventListener('click', (event) => {
         modalOrderId = null;
         render();
     }
-    if (target.dataset.action === 'toggleOrderItemsEditor') {
-        const editor = document.getElementById('orderItemEditor');
-        if (editor) editor.classList.toggle('hidden');
+    if (target.dataset.action === 'toggleOrderEditor') {
+        document.getElementById('orderItemEditor')?.classList.toggle('hidden');
+        document.getElementById('orderEditor')?.classList.toggle('hidden');
+    }
+    if (target.dataset.action === 'addOrderItem') {
+        const productId = document.getElementById('modalNewProduct')?.value;
+        const product = db.products.find((item) => item.id === Number(productId) && item.active);
+        const itemsContainer = document.getElementById('modalOrderItems');
+        if (!product || !itemsContainer) return;
+        const itemIndex = itemsContainer.children.length;
+        itemsContainer.insertAdjacentHTML('beforeend', `<div class="modal-order-item" data-item-index="${itemIndex}"><select class="modal-item-product">${db.products.filter((item) => item.active).map((item) => `<option value="${item.id}" ${item.id === product.id ? 'selected' : ''}>${item.name}</option>`).join('')}</select><input class="modal-item-quantity" type="number" min="1" step="1" value="1"><button type="button" class="danger compact" data-action="removeOrderItem" data-item-index="${itemIndex}">Remove</button></div>`);
+        document.getElementById('modalNewProduct').value = '';
+    }
+    if (target.dataset.action === 'removeOrderItem') {
+        target.closest('.modal-order-item')?.remove();
     }
     if (target.dataset.action === 'updateOrder') {
         if (user.role === 'rider') return;
@@ -555,11 +567,16 @@ document.addEventListener('click', (event) => {
         order.customer.name = document.getElementById('modalCustomerName').value.trim();
         order.customer.contact = document.getElementById('modalCustomerContact').value.trim();
         order.customer.address = document.getElementById('modalCustomerAddress').value.trim();
-        document.querySelectorAll('.modal-item-quantity').forEach((input) => {
-            order.items[Number(input.dataset.itemIndex)].qty = Math.max(1, Number(input.value || 1));
-        });
+        const itemRows = [...document.querySelectorAll('.modal-order-item')];
+        if (itemRows.length) {
+            order.items = itemRows.map((row) => {
+                const product = db.products.find((item) => item.id === Number(row.querySelector('.modal-item-product').value));
+                return { id: product.id, name: product.name, price: Number(product.price), qty: Math.max(1, Number(row.querySelector('.modal-item-quantity').value || 1)) };
+            });
+        }
         order.deliveryFee = order.fulfillment === 'delivery' ? Number(document.getElementById('modalDeliveryFee')?.value || 0) : 0;
         order.total = order.items.reduce((sum, item) => sum + item.price * item.qty, 0) + order.deliveryFee;
+        if (order.status !== 'delivered') order.status = Number(order.amountReceived || 0) >= order.total ? 'paid' : 'partial';
         persist();
         render();
     }
@@ -587,6 +604,7 @@ document.addEventListener('click', (event) => {
     }
     if (target.dataset.action === 'markDelivered' || target.dataset.action === 'markPickedUp') {
         const order = db.orders.find((item) => item.id === modalOrderId);
+        if (!order || Number(order.amountReceived || 0) < Number(order.total || 0)) return;
         if (!confirm(target.dataset.action === 'markPickedUp' ? 'Confirm this pickup order was collected?' : 'Mark this order as delivered?')) return;
         order.status = 'delivered';
         persist();
@@ -710,7 +728,7 @@ document.addEventListener('change', (event) => {
         const date = new Date();
         if (event.target.value === 'week') date.setDate(date.getDate() - 6);
         if (event.target.value === 'month') date.setDate(1);
-        if (event.target.value !== 'custom') reportStart = date.toISOString().slice(0, 10);
+        if (event.target.value !== 'custom') reportStart = philippineDate(date);
         reportEnd = today();
         render();
     }
