@@ -111,7 +111,7 @@ function renderLogin(message = '') {
 }
 
 function dashboard() {
-    const todayOrders = db.orders.filter((order) => order.createdAt.slice(0, 10) === today());
+    const selectedDayOrders = db.orders.filter((order) => order.scheduledDate === homeEnd);
     const tomorrowOrders = db.orders.filter((order) => order.scheduledDate === tomorrow() && order.status !== 'delivered');
     const rangeOrders = db.orders.filter((order) => {
         const date = order.createdAt.slice(0, 10);
@@ -120,15 +120,19 @@ function dashboard() {
     const chartDays = {};
     rangeOrders.forEach((order) => {
         const date = order.createdAt.slice(0, 10);
-        chartDays[date] = (chartDays[date] || 0) + order.total;
+        chartDays[date] = (chartDays[date] || 0) + Number(order.amountReceived || 0);
     });
     const chartValues = Object.entries(chartDays).sort(([a], [b]) => a.localeCompare(b));
     const chartMax = Math.max(...chartValues.map(([, value]) => value), 1);
+    const selectedDaySales = selectedDayOrders.reduce((sum, order) => sum + Number(order.amountReceived || 0), 0);
+    const selectedDayCash = selectedDayOrders.filter((order) => order.paymentMethod === 'cash').reduce((sum, order) => sum + Number(order.amountReceived || 0), 0);
+    const selectedDayGcash = selectedDayOrders.filter((order) => order.paymentMethod === 'gcash').reduce((sum, order) => sum + Number(order.amountReceived || 0), 0);
     return `
         <div class="metric-grid">
-            <div class="metric"><span>Today Sales</span><strong>${peso(todayOrders.reduce((s, o) => s + o.total, 0))}</strong></div>
-            <div class="metric"><span>Today Orders</span><strong>${todayOrders.length}</strong></div>
+            <div class="metric"><span>Selected-day sales</span><strong>${peso(selectedDaySales)}</strong></div>
+            <div class="metric"><span>Selected-day orders</span><strong>${selectedDayOrders.length}</strong></div>
             <div class="metric"><span>Tomorrow Orders</span><strong>${tomorrowOrders.length}</strong></div>
+            <div class="metric"><span>Cash / GCash</span><strong>${peso(selectedDayCash)} / ${peso(selectedDayGcash)}</strong></div>
         </div>
         <section class="panel stack">
             <h2>Sales chart</h2>
@@ -163,8 +167,8 @@ function pos() {
             <label>Contact number <input id="customerContact" type="tel" placeholder="Contact number"></label>
             <label>Address <input id="customerAddress" placeholder="Delivery or pickup address"></label>
             <label>Payment method <select id="paymentMethod"><option value="cash">Cash</option><option value="gcash">GCash</option></select></label>
-            <label>Amount received <input id="amountReceived" type="number" min="0" step="0.01" value="${total}"></label>
-            <button style="width:100%;margin-top:10px" data-action="checkout">Save Pre-order</button>
+            <label>Amount received <input id="amountReceived" type="number" min="0" step="0.01" placeholder="Leave blank if unpaid"></label>
+            <button style="width:100%;margin-top:10px" data-action="checkout">Order</button>
         </section>` : ''}`;
 }
 
@@ -177,11 +181,11 @@ function preorders() {
     return `
         <label>Date <input type="date" id="preorderDate" value="${scheduleDate}"></label>
         <section class="panel stack" style="margin-top:12px">
-            <h2>Pre-order items</h2>
+            <h2>Number of items</h2>
             ${Object.keys(requirements).length ? Object.entries(requirements).map(([name, qty]) => `<div class="cart-row"><span>${name}</span><strong>${qty}</strong></div>`).join('') : '<p class="hint">No pre-orders for this date.</p>'}
         </section>
         <section class="panel" style="margin-top:12px">
-            <h2>Upcoming Pre-orders</h2>
+            <h2>Orders</h2>
             <table><tbody>${orders.map((o) => `<tr><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.status} · Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small></td><td><button class="secondary" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
         </section>
         ${orderModal()}`;
@@ -197,7 +201,8 @@ function orderModal() {
     if (!order) return '';
     const balance = Math.max(0, order.total - order.amountReceived);
     const change = Math.max(0, order.amountReceived - order.total);
-    return `<div class="modal-backdrop"><section class="modal panel stack"><div class="cart-heading"><h2>Order details</h2><button class="secondary" data-action="closeModal">Close</button></div><p><strong>${order.customer.name || 'No customer name'}</strong><br>${order.customer.contact || 'No contact number'}<br>${order.customer.address || 'No address'}</p><p>${order.items.map((item) => `${item.name} x ${item.qty}`).join('<br>')}</p><p>Total: ${peso(order.total)}<br>Received: ${peso(order.amountReceived)}<br>Balance: ${peso(balance)}<br>Change: ${peso(change)}<br>Payment: ${order.paymentMethod}<br>Status: ${order.status}</p><label>Change amount received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="${order.amountReceived}"></label><button data-action="updatePayment" data-order-id="${order.id}">Change payment</button>${order.status !== 'delivered' ? '<button data-action="markDelivered">Mark as delivered</button>' : ''}</section></div>`;
+    const paymentInput = balance > 0 ? `<label>Change amount received <input id="modalAmountReceived" type="number" min="0" step="0.01" placeholder="Leave blank if unpaid"></label><button data-action="updatePayment" data-order-id="${order.id}">Change payment</button>` : '';
+    return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><button class="secondary" data-action="closeModal">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${order.status !== 'delivered' ? '<button data-action="markDelivered">Mark as delivered</button>' : ''}</section></div>`;
 }
 
 function reports() {
@@ -205,7 +210,7 @@ function reports() {
         const date = order.createdAt.slice(0, 10);
         return date >= reportStart && date <= reportEnd;
     });
-    const sales = orders.reduce((sum, order) => sum + order.total, 0);
+    const sales = orders.reduce((sum, order) => sum + Number(order.amountReceived || 0), 0);
     const expenses = db.expenses || [];
     const expenseTotal = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd).reduce((sum, expense) => sum + expense.amount, 0);
     const productCounts = {};
@@ -214,11 +219,60 @@ function reports() {
     return `
         <label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label>
         <div class="form-grid"><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
-        <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
-        ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(o.total)}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}</td><td>${peso(expense.amount)}</td></tr>`).join('') || '<tr><td>No expenses for this range.</td></tr>'}</tbody></table></section>`}
         <section class="panel stack"><h2>Add expense</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount"><button data-action="saveExpense">Save expense</button></section>
+        <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
+        ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total received</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(o.amountReceived)}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}</td><td>${peso(expense.amount)}</td></tr>`).join('') || '<tr><td>No expenses for this range.</td></tr>'}</tbody></table></section>`}
         <button data-action="toggleReportSummary">${reportSummaryVisible ? 'Hide summary' : 'Generate summary'}</button>
+        ${reportSummaryVisible ? '<button data-action="shareReportSummary">Create and share JPG</button>' : ''}
         ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expense descriptions</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description}</span><strong>${peso(expense.amount)}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section>` : ''}`;
+}
+
+async function shareReportSummary() {
+    const orders = db.orders.filter((order) => {
+        const date = order.createdAt.slice(0, 10);
+        return date >= reportStart && date <= reportEnd;
+    });
+    const expenses = (db.expenses || []).filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
+    const sales = orders.reduce((sum, order) => sum + Number(order.amountReceived || 0), 0);
+    const expenseTotal = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const productCounts = {};
+    orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
+    const canvas = document.createElement('canvas');
+    canvas.width = 1200;
+    canvas.height = 900;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#f4f7f8';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#17211f';
+    context.font = 'bold 42px Arial';
+    context.fillText("Drooly's Summary", 60, 75);
+    context.font = '24px Arial';
+    context.fillText(`${reportStart} to ${reportEnd}`, 60, 115);
+    const lines = [
+        `Whole sales: ${peso(sales)}`,
+        `Whole expenses: ${peso(expenseTotal)}`,
+        `Orders count: ${orders.length}`,
+        `Profit: ${peso(sales - expenseTotal)}`,
+        '',
+        'Products sold:',
+        ...Object.entries(productCounts).map(([name, count]) => `${name}: ${count}`),
+        '',
+        'Expenses:',
+        ...expenses.map((expense) => `${expense.description}: ${peso(expense.amount)}`),
+    ];
+    context.font = '28px Arial';
+    lines.forEach((line, index) => context.fillText(line, 60, 180 + index * 38));
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    const file = new File([blob], `droolys-summary-${reportStart}-to-${reportEnd}.jpg`, { type: 'image/jpeg' });
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+        await navigator.share({ title: "Drooly's sales summary", files: [file] });
+        return;
+    }
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = file.name;
+    link.click();
+    URL.revokeObjectURL(link.href);
 }
 
 function inventory() {
@@ -281,7 +335,7 @@ function checkout() {
     });
     cart = new Map();
     persist();
-    tab = 'reports';
+    tab = 'pos';
     cartOpen = false;
     render();
 }
@@ -309,6 +363,7 @@ document.addEventListener('click', (event) => {
         reportSummaryVisible = !reportSummaryVisible;
         render();
     }
+    if (target.dataset.action === 'shareReportSummary') shareReportSummary().catch(() => alert('Unable to share the summary image.'));
     if (target.dataset.action === 'login') {
         const email = document.getElementById('email').value.trim();
         const password = document.getElementById('password').value;
