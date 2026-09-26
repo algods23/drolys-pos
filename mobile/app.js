@@ -47,7 +47,11 @@ const store = {
 };
 
 let db = store.read();
-db.expenses = db.expenses || [];
+db.expenses = (db.expenses || []).map((expense) => ({
+    ...expense,
+    quantity: Number(expense.quantity || 1),
+    amount: Number(expense.amount || 0),
+}));
 db.products = db.products.map((product) => ({ ...product, active: product.active !== false }));
 db.orders = db.orders.map((order) => ({
     ...order,
@@ -70,6 +74,11 @@ let cartOpen = false;
 let modalOrderId = null;
 let reportView = 'sales';
 let reportSummaryVisible = false;
+let editingExpenseId = null;
+
+function calculateExpenseTotal(expense) {
+    return Number(expense.quantity || 1) * Number(expense.amount || 0);
+}
 
 function persist() {
     store.write(db);
@@ -216,16 +225,16 @@ function reports() {
     });
     const sales = orders.reduce((sum, order) => sum + Number(order.amountReceived || 0), 0);
     const expenses = db.expenses || [];
-    const expenseTotal = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd).reduce((sum, expense) => sum + expense.amount, 0);
+    const expenseTotal = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd).reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0);
     const productCounts = {};
     orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
     const selectedExpenses = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
     return `
         <label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label>
         <div class="form-grid"><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
-        <section class="panel stack"><h2>Add expense</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount"><button data-action="saveExpense">Save expense</button></section>
+        <section class="panel stack"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount per product"><div class="row-actions"><button data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
-        ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total received</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(o.amountReceived)}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}</td><td>${peso(expense.amount)}</td></tr>`).join('') || '<tr><td>No expenses for this range.</td></tr>'}</tbody></table></section>`}
+        ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total received</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(o.amountReceived)}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}<br><small>${expense.quantity} x ${peso(expense.amount)}</small></td><td>${peso(calculateExpenseTotal(expense))}</td><td><div class="row-actions"><button class="secondary compact" data-edit-expense="${expense.id}">Edit</button><button class="danger compact" data-delete-expense="${expense.id}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
         ${reportSummaryVisible ? '' : '<button data-action="toggleReportSummary">Generate summary</button>'}
         ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expense descriptions</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description} · Qty ${expense.quantity || 1}</span><strong>${peso(expense.amount)}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
 }
@@ -237,7 +246,7 @@ async function shareReportSummary() {
     });
     const expenses = (db.expenses || []).filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
     const sales = orders.reduce((sum, order) => sum + Number(order.amountReceived || 0), 0);
-    const expenseTotal = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const expenseTotal = expenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0);
     const productCounts = {};
     orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
     const canvas = document.createElement('canvas');
@@ -261,7 +270,7 @@ async function shareReportSummary() {
         ...Object.entries(productCounts).map(([name, count]) => `${name}: ${count}`),
         '',
         'Expenses:',
-        ...expenses.map((expense) => `${expense.description}: ${peso(expense.amount)}`),
+        ...expenses.map((expense) => `${expense.description}: ${expense.quantity} x ${peso(expense.amount)} = ${peso(calculateExpenseTotal(expense))}`),
     ];
     context.font = '28px Arial';
     lines.forEach((line, index) => context.fillText(line, 60, 180 + index * 38));
@@ -374,6 +383,10 @@ document.addEventListener('click', (event) => {
         render();
     }
     if (target.dataset.action === 'shareReportSummary') shareReportSummary().catch(() => alert('Unable to share the summary image.'));
+    if (target.dataset.action === 'cancelExpenseEdit') {
+        editingExpenseId = null;
+        render();
+    }
     if (target.dataset.action === 'login') {
         const email = document.getElementById('email').value.trim();
         const password = document.getElementById('password').value;
@@ -473,9 +486,35 @@ document.addEventListener('click', (event) => {
         const amount = Number(document.getElementById('expenseAmount').value || 0);
         const description = document.getElementById('expenseDescription').value.trim();
         const quantity = Number(document.getElementById('expenseQuantity').value || 1);
-        if (description && amount > 0 && quantity > 0) db.expenses.push({ id: Date.now(), description, quantity, amount, date: today() });
+        if (description && amount > 0 && quantity > 0) {
+            const expense = db.expenses.find((item) => item.id === editingExpenseId);
+            if (expense) {
+                expense.description = description;
+                expense.quantity = quantity;
+                expense.amount = amount;
+            } else {
+                db.expenses.push({ id: Date.now(), description, quantity, amount, date: today() });
+            }
+        }
+        editingExpenseId = null;
         persist();
         render();
+    }
+    if (target.dataset.editExpense) {
+        editingExpenseId = Number(target.dataset.editExpense);
+        const expense = db.expenses.find((item) => item.id === editingExpenseId);
+        render();
+        document.getElementById('expenseDescription').value = expense.description;
+        document.getElementById('expenseQuantity').value = expense.quantity;
+        document.getElementById('expenseAmount').value = expense.amount;
+        document.getElementById('expenseDescription').focus();
+    }
+    if (target.dataset.deleteExpense) {
+        if (confirm('Delete this expense?')) {
+            db.expenses = db.expenses.filter((item) => item.id !== Number(target.dataset.deleteExpense));
+            persist();
+            render();
+        }
     }
 });
 
