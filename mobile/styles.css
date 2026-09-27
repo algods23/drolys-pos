@@ -67,6 +67,11 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .mode button.active { background: var(--brand-dark); }
 .form-grid { display: grid; gap: 10px; }
+.choice-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border: 0; padding: 0; margin: 0; }
+.choice-group legend { color: var(--muted); font-size: 13px; padding: 0 0 6px; }
+.choice { display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); }
+.choice input { width: auto; margin: 0; accent-color: var(--brand); }
+.item-requirements { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .edit-order { margin: 14px 0; padding: 14px 0; border-top: 1px dashed #9d958a; border-bottom: 1px dashed #9d958a; }
 .edit-order h3 { margin: 0; font-family: Arial, Helvetica, sans-serif; font-size: 16px; }

@@ -118,6 +118,18 @@ function paymentMethodsLabel(order) {
     return [...new Set((order.payments || []).map((payment) => String(payment.method || 'cash').toUpperCase()))].join(' + ') || String(order.paymentMethod || 'cash').toUpperCase();
 }
 
+function paymentBreakdown(order) {
+    const totals = { cash: 0, gcash: 0 };
+    let remaining = Number(order.total || 0);
+    (order.payments || [{ method: order.paymentMethod || 'cash', amount: order.amountReceived || 0 }]).forEach((payment) => {
+        const amount = Math.min(remaining, Math.max(0, Number(payment.amount || 0)));
+        const method = payment.method === 'gcash' ? 'gcash' : 'cash';
+        totals[method] += amount;
+        remaining -= amount;
+    });
+    return totals;
+}
+
 function nextReceiptNumber() {
     const highest = db.orders.reduce((max, order) => {
         const match = String(order.receipt || '').match(/^DRL-(\d+)$/);
@@ -255,7 +267,7 @@ function renderLogin(message = '') {
 
 function dashboard() {
     if (user.role === 'rider') return riderDashboard();
-    const selectedDayOrders = db.orders.filter((order) => order.scheduledDate === homeEnd);
+    const selectedDayOrders = db.orders.filter((order) => reportDate(order) === homeEnd);
     const tomorrowOrders = db.orders.filter((order) => order.scheduledDate === tomorrow() && order.status !== 'delivered');
     const rangeOrders = db.orders.filter((order) => {
         if (!isPaidOrder(order)) return false;
@@ -271,11 +283,11 @@ function dashboard() {
     const chartMax = Math.max(...chartValues.map(([, value]) => value), 1);
     const paidSelectedDayOrders = selectedDayOrders.filter(isPaidOrder);
     const selectedDaySales = paidSelectedDayOrders.reduce((sum, order) => sum + salesAmount(order), 0);
-    const selectedDayCash = paidSelectedDayOrders.filter((order) => order.paymentMethod === 'cash').reduce((sum, order) => sum + salesAmount(order), 0);
-    const selectedDayGcash = paidSelectedDayOrders.filter((order) => order.paymentMethod === 'gcash').reduce((sum, order) => sum + salesAmount(order), 0);
+    const selectedDayCash = paidSelectedDayOrders.reduce((sum, order) => sum + paymentBreakdown(order).cash, 0);
+    const selectedDayGcash = paidSelectedDayOrders.reduce((sum, order) => sum + paymentBreakdown(order).gcash, 0);
     return `
             <div class="metric-grid home-metrics">
-                <div class="metric"><span>Today sales</span><strong>${peso(selectedDaySales)}</strong><small class="metric-detail">Cash ${peso(selectedDayCash)} · GCash ${peso(selectedDayGcash)}</small></div>
+                <div class="metric today-sales"><span>Today sales</span><strong>${peso(selectedDaySales)}</strong><small class="metric-detail">Cash ${peso(selectedDayCash)}</small><small class="metric-detail">GCash ${peso(selectedDayGcash)}</small></div>
                 <div class="metric"><span>Today orders</span><strong>${selectedDayOrders.length}</strong></div>
                 <div class="metric"><span>Tomorrow orders</span><strong>${tomorrowOrders.length}</strong></div>
         </div>
@@ -319,10 +331,10 @@ function pos() {
             <div class="total-row"><span>Payable</span><strong id="cartTotal">${peso(subtotal)}</strong></div>
             <label>Customer name <input id="customerName" placeholder="Customer name" required></label>
             <label>Contact number <input id="customerContact" type="tel" placeholder="Contact number"></label>
-            <label>Delivery or pick-up <select id="fulfillment"><option value="delivery" ${checkoutFulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${checkoutFulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label>
-            <label>Order time <select id="scheduledTime">${timeOptions()}</select></label>
+            <fieldset class="choice-group"><legend>Delivery or pick-up</legend><label class="choice"><input type="radio" name="fulfillment" value="delivery" ${checkoutFulfillment === 'delivery' ? 'checked' : ''}> Delivery</label><label class="choice"><input type="radio" name="fulfillment" value="pickup" ${checkoutFulfillment === 'pickup' ? 'checked' : ''}> Pick-up</label></fieldset>
+            <label>Order time <input id="scheduledTime" type="time"></label>
             <label>Address or pick-up note <input id="customerAddress" placeholder="Address or pick-up note"></label>
-            <label>Payment method <select id="paymentMethod"><option value="cash">Cash</option><option value="gcash">GCash</option></select></label>
+            <fieldset class="choice-group"><legend>Payment method</legend><label class="choice"><input type="radio" name="paymentMethod" value="cash" checked> Cash</label><label class="choice"><input type="radio" name="paymentMethod" value="gcash"> GCash</label></fieldset>
             <label>Payment received <input id="amountReceived" type="number" min="0" step="0.01" placeholder="Leave blank if unpaid"></label>
             <button style="width:100%;margin-top:10px" data-action="checkout">Order</button>
         </section>` : ''}`;
@@ -339,7 +351,7 @@ function preorders() {
         ${user.role === 'rider' ? '<section class="panel"><h2>Today\'s route</h2><p class="hint">Only orders scheduled for today are shown.</p></section>' : `<label>Date <input type="date" id="preorderDate" value="${scheduleDate}"></label>`}
         <section class="panel stack" style="margin-top:12px">
             <h2>Number of items</h2>
-            ${Object.keys(requirements).length ? Object.entries(requirements).map(([name, qty]) => `<div class="cart-row"><span>${name}</span><strong>${qty}</strong></div>`).join('') : '<p class="hint">No pre-orders for this date.</p>'}
+            ${Object.keys(requirements).length ? `<div class="item-requirements">${Object.entries(requirements).map(([name, qty]) => `<div class="cart-row"><span>${name}</span><strong>${qty}</strong></div>`).join('')}</div>` : '<p class="hint">No pre-orders for this date.</p>'}
         </section>
         <section class="panel" style="margin-top:12px">
             <h2>Orders</h2>
@@ -377,7 +389,7 @@ function orderModal() {
     const phone = (order.customer.contact || '').replace(/[^+\d]/g, '');
     const balance = Math.max(0, order.total - order.amountReceived);
     const change = Math.max(0, order.amountReceived - order.total);
-        const paymentInput = balance > 0 ? `<label>Payment method <select id="modalPaymentMethod"><option value="cash">Cash</option><option value="gcash">GCash</option></select></label><label>Payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label><button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : `<div class="receipt-change"><span>CHANGE</span><strong>${peso(change)}</strong></div>`;
+        const paymentInput = balance > 0 ? `<fieldset class="choice-group"><legend>Payment method</legend><label class="choice"><input type="radio" name="modalPaymentMethod" value="cash" checked> Cash</label><label class="choice"><input type="radio" name="modalPaymentMethod" value="gcash"> GCash</label></fieldset><label>Payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label><button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : `<div class="receipt-change"><span>CHANGE</span><strong>${peso(change)}</strong></div>`;
             const itemEditor = orderEditor(order);
             const customerEditor = user.role === 'rider' ? '' : `<section id="orderEditor" class="edit-order stack hidden"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><label>Delivery fee <input id="modalDeliveryFee" type="number" min="0" step="0.01" value="${order.deliveryFee || 0}"></label>${itemEditor}<button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section>`;
             const headerActions = `${user.role === 'rider' ? '' : `<button class="secondary compact" data-action="toggleOrderEditor">Update</button><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button>`}<button class="secondary compact" data-action="closeModal">Close</button>`;
@@ -557,6 +569,11 @@ function render() {
     setupSyncListener();
     const views = { dashboard, pos, preorders, archived, reports, inventory };
     document.getElementById('app').innerHTML = appShell(views[tab]());
+    const fulfillmentSelect = document.getElementById('modalFulfillment');
+    if (fulfillmentSelect) {
+        const selected = fulfillmentSelect.value;
+        fulfillmentSelect.outerHTML = `<fieldset class="choice-group"><legend>Delivery or pick-up</legend><label class="choice"><input type="radio" name="modalFulfillment" value="delivery" ${selected === 'delivery' ? 'checked' : ''}> Delivery</label><label class="choice"><input type="radio" name="modalFulfillment" value="pickup" ${selected === 'pickup' ? 'checked' : ''}> Pick-up</label></fieldset>`;
+    }
     const receiptTotals = document.querySelector('.receipt-totals');
     if (receiptTotals) {
         const rows = [...receiptTotals.children];
@@ -586,13 +603,13 @@ function checkout() {
         document.getElementById('customerName')?.focus();
         return;
     }
-    const fulfillment = document.getElementById('fulfillment')?.value || 'delivery';
+    const fulfillment = document.querySelector('input[name="fulfillment"]:checked')?.value || 'delivery';
     const deliveryFee = fulfillment === 'delivery' ? Number(document.getElementById('deliveryFee')?.value || 0) : 0;
     if (deliveryFee < 0) return;
     const total = subtotal + deliveryFee;
     if (!confirm(`Create this ${fulfillment === 'delivery' ? 'delivery' : 'pick-up'} order for ${peso(total)}?`)) return;
     const amountReceived = Number(document.getElementById('amountReceived')?.value || 0);
-    const paymentMethod = document.getElementById('paymentMethod')?.value || 'cash';
+    const paymentMethod = document.querySelector('input[name="paymentMethod"]:checked')?.value || 'cash';
     db.orders.push({
         id: Date.now(),
         receipt: nextReceiptNumber(),
@@ -727,7 +744,7 @@ document.addEventListener('click', (event) => {
         if (user.role === 'rider') return;
         const order = db.orders.find((item) => item.id === Number(target.dataset.orderId));
         if (!confirm('Save these order changes?')) return;
-        order.fulfillment = document.getElementById('modalFulfillment').value;
+        order.fulfillment = document.querySelector('input[name="modalFulfillment"]:checked')?.value || 'delivery';
         order.scheduledTime = document.getElementById('modalScheduledTime').value;
         order.customer.name = document.getElementById('modalCustomerName').value.trim();
         order.customer.contact = document.getElementById('modalCustomerContact').value.trim();
@@ -746,7 +763,7 @@ document.addEventListener('click', (event) => {
     if (target.dataset.action === 'updatePayment') {
         const order = db.orders.find((item) => item.id === Number(target.dataset.orderId));
         const additionalPayment = Number(document.getElementById('modalAmountReceived').value || 0);
-        const paymentMethod = document.getElementById('modalPaymentMethod')?.value || 'cash';
+        const paymentMethod = document.querySelector('input[name="modalPaymentMethod"]:checked')?.value || 'cash';
         if (!order || additionalPayment <= 0) return;
         const cumulativePayment = Number(order.amountReceived || 0) + additionalPayment;
         if (!confirm(`Save additional payment of ${peso(additionalPayment)}?`)) return;
@@ -863,7 +880,7 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('change', (event) => {
-    if (event.target.id === 'fulfillment') {
+    if (event.target.name === 'fulfillment') {
         checkoutFulfillment = event.target.value;
         const feeField = document.getElementById('deliveryFeeField');
         const feeInput = document.getElementById('deliveryFee');
