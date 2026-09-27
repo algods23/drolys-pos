@@ -242,8 +242,9 @@ function appShell(content) {
 
     return `
         <section class="screen">
-            <header class="topbar"><div class="topbar-brand"><strong>Drooly's</strong><small>${user.name} · ${user.role}</small></div><nav class="topnav">${tabs.map(([id, label]) => `<button class="${tab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('')}</nav><button class="secondary compact" data-action="logout">Logout</button></header>
+            <div class="topbar"><div class="topbar-brand"><strong>Drooly's</strong><small>${user.name} · ${user.role}</small></div><button class="secondary compact" data-action="logout">Logout</button></div>
             ${content}
+            <nav class="tabs">${tabs.map(([id, label]) => `<button class="${tab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('')}</nav>
         </section>`;
 }
 
@@ -568,6 +569,7 @@ function render() {
     setupSyncListener();
     const views = { dashboard, pos, preorders, archived, reports, inventory };
     document.getElementById('app').innerHTML = appShell(views[tab]());
+    document.getElementById('app').classList.toggle('reports-view', tab === 'reports');
     if (modalOrderId) document.querySelector('.receipt-top-actions')?.insertAdjacentHTML('afterbegin', `<button class="secondary compact" data-action="shareOrder" data-order-id="${modalOrderId}">Share</button>`);
     if (modalOrderId && db.orders.find((order) => order.id === modalOrderId)?.status === 'delivered') {
         document.getElementById('orderEditor')?.remove();
@@ -600,8 +602,10 @@ async function shareOrder(orderId) {
     const order = db.orders.find((item) => item.id === Number(orderId));
     if (!order) return;
     const text = `${order.receipt} - ${order.customer.name || 'Customer'}\nPayable: ${peso(order.total)}\nReceived: ${peso(order.amountReceived)}\n${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}`;
-    if (navigator.share) await navigator.share({ title: `Order ${order.receipt}`, text });
-    else if (navigator.clipboard) await navigator.clipboard.writeText(text);
+    const nativeShare = window.Capacitor?.Plugins?.Share;
+    if (nativeShare) return nativeShare.share({ title: `Order ${order.receipt}`, text, dialogTitle: 'Share order' });
+    if (navigator.share) return navigator.share({ title: `Order ${order.receipt}`, text });
+    if (navigator.clipboard) await navigator.clipboard.writeText(text);
 }
 
 function addToCart(id) {

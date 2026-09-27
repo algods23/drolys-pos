@@ -25,7 +25,7 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 10px 6px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 
-.screen { min-height: 100vh; padding: env(safe-area-inset-top) 14px 20px; }
+.screen { min-height: 100vh; padding: env(safe-area-inset-top) 14px calc(78px + env(safe-area-inset-bottom)); }
 .login { display: grid; align-content: center; min-height: 100vh; padding: 20px; }
 .login-card, .panel, .metric, .product, .cart { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
 .brand { margin-bottom: 18px; }
@@ -36,13 +36,13 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .section-heading h2 { margin: 0; }
 .compact { padding: 8px 10px; font-size: 12px; }
-.topbar { display: flex; align-items: center; gap: 10px; padding: 10px 0 14px; border-bottom: 1px solid var(--line); }
-.topbar-brand { min-width: 92px; display: grid; gap: 2px; }
-.topbar-brand strong { font-size: 19px; }
-.topbar-brand small { color: var(--muted); font-size: 10px; }
-.topnav { display: flex; flex: 1; gap: 4px; overflow-x: auto; }
-.topnav button { flex: 0 0 auto; background: transparent; color: var(--muted); padding: 8px 7px; font-size: 11px; border-radius: 8px; }
-.topnav button.active { background: #ffe1ee; color: var(--brand-dark); }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 0; }
+.topbar-brand { display: grid; gap: 2px; }
+.topbar-brand strong { font-size: 22px; }
+.topbar-brand small { color: var(--muted); font-size: 11px; }
+.tabs { position: fixed; z-index: 5; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(6, 1fr); background: #fff; border-top: 1px solid var(--line); padding: 7px 8px calc(7px + env(safe-area-inset-bottom)); }
+.tabs button { background: transparent; color: var(--muted); padding: 9px 4px; font-size: 12px; border-radius: 8px; }
+.tabs button.active { background: #ffe1ee; color: var(--brand-dark); }
 .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .home-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .home-metrics .metric { padding: 10px 8px; min-width: 0; }
@@ -137,6 +137,15 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .receipt-confirmation { max-width: 420px; }
 .report-actions { display: flex; gap: 8px; margin: 12px 0; }
 .report-actions button { flex: 1; }
+.reports-view { font-size: 12px; }
+.reports-view h2 { font-size: 18px; }
+.reports-view h3 { font-size: 14px; margin: 8px 0 4px; }
+.reports-view input, .reports-view select { padding: 8px; font-size: 12px; }
+.reports-view button { padding: 8px 10px; font-size: 12px; }
+.reports-view .metric { padding: 10px; }
+.reports-view .metric strong { font-size: 18px; }
+.reports-view th, .reports-view td { padding: 7px 5px; font-size: 12px; }
+.reports-view .report-actions { margin: 8px 0; }
 .bar-chart { min-height: 190px; display: flex; align-items: end; gap: 8px; overflow-x: auto; padding: 16px 4px 0; border-bottom: 1px solid var(--line); }
 .bar-column { min-width: 52px; display: grid; justify-items: center; align-content: end; gap: 4px; color: var(--muted); font-size: 10px; }
 .bar-column span { font-size: 9px; white-space: nowrap; transform: rotate(-45deg); transform-origin: center; margin-bottom: 8px; }
