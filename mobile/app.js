@@ -106,6 +106,10 @@ function salesAmount(order) {
     return Number(order.total || 0);
 }
 
+function isPaidOrder(order) {
+    return Number(order.amountReceived || 0) >= Number(order.total || 0);
+}
+
 function reportDate(order) {
     return philippineDate(new Date(order.createdAt));
 }
@@ -177,6 +181,7 @@ function dashboard() {
     const selectedDayOrders = db.orders.filter((order) => order.scheduledDate === homeEnd);
     const tomorrowOrders = db.orders.filter((order) => order.scheduledDate === tomorrow() && order.status !== 'delivered');
     const rangeOrders = db.orders.filter((order) => {
+        if (!isPaidOrder(order)) return false;
         const date = philippineDate(new Date(order.createdAt));
         return date >= homeStart && date <= homeEnd;
     });
@@ -187,9 +192,10 @@ function dashboard() {
     });
     const chartValues = Object.entries(chartDays).sort(([a], [b]) => a.localeCompare(b));
     const chartMax = Math.max(...chartValues.map(([, value]) => value), 1);
-    const selectedDaySales = selectedDayOrders.reduce((sum, order) => sum + salesAmount(order), 0);
-    const selectedDayCash = selectedDayOrders.filter((order) => order.paymentMethod === 'cash').reduce((sum, order) => sum + salesAmount(order), 0);
-    const selectedDayGcash = selectedDayOrders.filter((order) => order.paymentMethod === 'gcash').reduce((sum, order) => sum + salesAmount(order), 0);
+    const paidSelectedDayOrders = selectedDayOrders.filter(isPaidOrder);
+    const selectedDaySales = paidSelectedDayOrders.reduce((sum, order) => sum + salesAmount(order), 0);
+    const selectedDayCash = paidSelectedDayOrders.filter((order) => order.paymentMethod === 'cash').reduce((sum, order) => sum + salesAmount(order), 0);
+    const selectedDayGcash = paidSelectedDayOrders.filter((order) => order.paymentMethod === 'gcash').reduce((sum, order) => sum + salesAmount(order), 0);
     return `
             <div class="metric-grid home-metrics">
                 <div class="metric"><span>Today sales</span><strong>${peso(selectedDaySales)}</strong><small class="metric-detail">Cash ${peso(selectedDayCash)} · GCash ${peso(selectedDayGcash)}</small></div>
@@ -280,7 +286,7 @@ function callClientAction() {
 function orderEditor(order) {
     if (user.role === 'rider') return '';
     const productOptions = (selectedId = '') => db.products.filter((product) => product.active).map((product) => `<option value="${product.id}" ${String(product.id) === String(selectedId) ? 'selected' : ''}>${product.name}</option>`).join('');
-    const itemRows = order.items.map((item, index) => `<div class="modal-order-item" data-item-index="${index}"><select class="modal-item-product">${productOptions(item.productId || db.products.find((product) => product.name === item.name)?.id)}</select><input class="modal-item-quantity" type="number" min="1" step="1" value="${item.qty}"><button type="button" class="danger compact" data-action="removeOrderItem" data-item-index="${index}">Remove</button></div>`).join('');
+    const itemRows = order.items.map((item, index) => `<div class="modal-order-item" data-item-index="${index}"><select class="modal-item-product">${productOptions(item.productId || db.products.find((product) => product.name === item.name)?.id)}</select><div class="modal-item-quantity-controls"><button type="button" class="secondary compact" data-action="adjustOrderItem" data-delta="-1">-</button><input class="modal-item-quantity" type="number" min="0" step="1" value="${item.qty}"><button type="button" class="secondary compact" data-action="adjustOrderItem" data-delta="1">+</button></div></div>`).join('');
     return `<section id="orderItemEditor" class="order-item-editor stack hidden"><h3>Items and delivery fee</h3><div id="modalOrderItems">${itemRows}</div><div class="row-actions"><select id="modalNewProduct"><option value="">Add product</option>${productOptions()}</select><button type="button" class="secondary compact" data-action="addOrderItem">Add</button></div><label>Delivery fee <input id="modalDeliveryFee" type="number" min="0" step="0.01" value="${order.deliveryFee || 0}"></label><p class="hint">Update the item list, then select Update to save.</p></section>`;
 }
 
@@ -329,6 +335,7 @@ function legacyReports() {
 
 function reports() {
     const orders = db.orders.filter((order) => {
+        if (!isPaidOrder(order)) return false;
         const date = reportDate(order);
         return date >= reportStart && date <= reportEnd;
     });
@@ -362,6 +369,7 @@ function reports() {
 
 async function shareReportSummary() {
     const orders = db.orders.filter((order) => {
+        if (!isPaidOrder(order)) return false;
         const date = philippineDate(new Date(order.createdAt));
         return date >= reportStart && date <= reportEnd;
     });
@@ -587,13 +595,17 @@ document.addEventListener('click', (event) => {
         document.getElementById('orderItemEditor')?.classList.toggle('hidden');
         document.getElementById('orderEditor')?.classList.toggle('hidden');
     }
+    if (target.dataset.action === 'adjustOrderItem') {
+        const input = target.closest('.modal-order-item')?.querySelector('.modal-item-quantity');
+        if (input) input.value = Math.max(0, Number(input.value || 0) + Number(target.dataset.delta || 0));
+    }
     if (target.dataset.action === 'addOrderItem') {
         const productId = document.getElementById('modalNewProduct')?.value;
         const product = db.products.find((item) => item.id === Number(productId) && item.active);
         const itemsContainer = document.getElementById('modalOrderItems');
         if (!product || !itemsContainer) return;
         const itemIndex = itemsContainer.children.length;
-        itemsContainer.insertAdjacentHTML('beforeend', `<div class="modal-order-item" data-item-index="${itemIndex}"><select class="modal-item-product">${db.products.filter((item) => item.active).map((item) => `<option value="${item.id}" ${item.id === product.id ? 'selected' : ''}>${item.name}</option>`).join('')}</select><input class="modal-item-quantity" type="number" min="1" step="1" value="1"><button type="button" class="danger compact" data-action="removeOrderItem" data-item-index="${itemIndex}">Remove</button></div>`);
+        itemsContainer.insertAdjacentHTML('beforeend', `<div class="modal-order-item" data-item-index="${itemIndex}"><select class="modal-item-product">${db.products.filter((item) => item.active).map((item) => `<option value="${item.id}" ${item.id === product.id ? 'selected' : ''}>${item.name}</option>`).join('')}</select><div class="modal-item-quantity-controls"><button type="button" class="secondary compact" data-action="adjustOrderItem" data-delta="-1">-</button><input class="modal-item-quantity" type="number" min="0" step="1" value="1"><button type="button" class="secondary compact" data-action="adjustOrderItem" data-delta="1">+</button></div></div>`);
         document.getElementById('modalNewProduct').value = '';
     }
     if (target.dataset.action === 'removeOrderItem') {
@@ -609,12 +621,10 @@ document.addEventListener('click', (event) => {
         order.customer.contact = document.getElementById('modalCustomerContact').value.trim();
         order.customer.address = document.getElementById('modalCustomerAddress').value.trim();
         const itemRows = [...document.querySelectorAll('.modal-order-item')];
-        if (itemRows.length) {
-            order.items = itemRows.map((row) => {
+        order.items = itemRows.map((row) => {
                 const product = db.products.find((item) => item.id === Number(row.querySelector('.modal-item-product').value));
-                return { id: product.id, name: product.name, price: Number(product.price), qty: Math.max(1, Number(row.querySelector('.modal-item-quantity').value || 1)) };
-            });
-        }
+                return { id: product.id, name: product.name, price: Number(product.price), qty: Number(row.querySelector('.modal-item-quantity').value || 0) };
+            }).filter((item) => item.qty > 0);
         order.deliveryFee = order.fulfillment === 'delivery' ? Number(document.getElementById('modalDeliveryFee')?.value || 0) : 0;
         order.total = order.items.reduce((sum, item) => sum + item.price * item.qty, 0) + order.deliveryFee;
         if (order.status !== 'delivered') order.status = Number(order.amountReceived || 0) >= order.total ? 'paid' : 'partial';
