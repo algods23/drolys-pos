@@ -103,7 +103,10 @@ let syncStatus = '';
 let syncServer = null;
 let syncListenerReady = false;
 let posCategoryFilter = 'All';
-let archivedDate = today();
+let archivedDateFilter = '';
+const LOADING_MIN_MS = 5000;
+const appStartedAt = Date.now();
+let loadingHideScheduled = false;
 
 function calculateExpenseTotal(expense) {
     return Number(expense.quantity || 1) * Number(expense.amount || 0);
@@ -271,7 +274,7 @@ function renderLogin(message = '') {
     document.getElementById('app').innerHTML = `
         <section class="login">
             <div class="login-card stack">
-                <div class="brand"><img class="landing-logo" src="landing-page.jpg" alt="Drooly's"><p>Pre-order management</p></div>
+                <div class="brand"><img class="landing-logo" src="landing-page.jpg" alt="Drooly's"></div>
                 ${message ? `<div class="notice error">${message}</div>` : ''}
                 <label>Email <input id="email" value="admin@droolys.local" autocomplete="username"></label>
                 <label>Password <input id="password" type="password" value="password" autocomplete="current-password"></label>
@@ -326,8 +329,7 @@ function pos() {
     const categories = ['All', ...productCategoryOptions()];
     const visibleProducts = db.products.filter((product) => product.active && (posCategoryFilter === 'All' || product.category === posCategoryFilter));
     return `
-        <label style="margin:10px 0">Schedule date <input type="date" id="scheduleDate" min="${today()}" value="${scheduleDate}"></label>
-        <label class="pos-category-filter">Category <select id="posCategoryFilter">${categories.map((category) => `<option value="${category}" ${category === posCategoryFilter ? 'selected' : ''}>${category}</option>`).join('')}</select></label>
+        <div class="pos-controls"><label>Schedule date <input type="date" id="scheduleDate" min="${today()}" value="${scheduleDate}"></label><label>Category <select id="posCategoryFilter">${categories.map((category) => `<option value="${category}" ${category === posCategoryFilter ? 'selected' : ''}>${category}</option>`).join('')}</select></label></div>
         <div class="products">
             ${visibleProducts.map((p) => `
                 <button class="product" data-add="${p.id}">
@@ -361,7 +363,7 @@ function pos() {
     function orderConfirmation() {
         const order = db.orders.find((item) => item.id === confirmationOrderId);
         if (!order) return '';
-        return `<div class="modal-backdrop"><section class="receipt modal receipt-confirmation"><div class="receipt-top"><div><strong>CHECK ORDER</strong><small>REVIEW BEFORE SERVING</small></div><button class="secondary compact" data-action="closeConfirmation">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span></div><div class="receipt-customer"><strong>${order.customer.name}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span></div><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div></div><div class="receipt-status">${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}</div><div class="receipt-footer-actions"><button class="secondary compact btn-oneline" data-action="shareOrder" data-order-id="${order.id}">Share receipt</button><button class="secondary compact btn-oneline" data-action="closeConfirmation">Done</button></div></section></div>`;
+        return `<div class="modal-backdrop"><section class="receipt modal receipt-confirmation"><div class="receipt-top"><div><strong>CHECK ORDER</strong><small>REVIEW BEFORE SERVING</small></div><button class="secondary compact" data-action="closeConfirmation">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span class="receipt-schedule"><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span><span class="receipt-fulfillment">${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span></span></div><div class="receipt-customer"><strong>${order.customer.name}</strong></div><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div></div><div class="receipt-status">${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}</div><div class="receipt-footer-actions"><button class="compact btn-oneline" data-action="shareOrder" data-order-id="${order.id}">Share receipt</button><button class="secondary compact btn-oneline" data-action="closeConfirmation">Done</button></div></section></div>`;
     }
 
 function preorders() {
@@ -384,9 +386,23 @@ function preorders() {
         ${orderModal()}${callClientAction()}`;
 }
 
+function archivedOrdersList() {
+    const delivered = db.orders.filter((order) => order.status === 'delivered');
+    const sorted = delivered.sort((a, b) => `${b.scheduledDate}T${b.scheduledTime || ''}`.localeCompare(`${a.scheduledDate}T${a.scheduledTime || ''}`));
+    if (user.role === 'rider') return sorted.filter((order) => order.scheduledDate === today());
+    if (archivedDateFilter) return sorted.filter((order) => order.scheduledDate === archivedDateFilter);
+    return sorted;
+}
+
 function archived() {
-    const orders = db.orders.filter((order) => order.status === 'delivered' && order.scheduledDate === archivedDate);
-    return `<label>Date <input type="date" id="archivedDate" value="${archivedDate}"></label><section class="panel"><h2>Archived orders</h2><table><thead><tr><th>Order ID</th><th>Name</th><th></th></tr></thead><tbody>${orders.map((o) => `<tr><td>${o.receipt}</td><td>${o.customer.name || 'No customer name'}</td><td><button class="secondary compact btn-oneline" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td colspan="3">No archived orders for this date.</td></tr>'}</tbody></table></section>${orderModal()}${callClientAction()}`;
+    const orders = archivedOrdersList();
+    const dateControl = user.role === 'rider'
+        ? `<p class="hint">Showing archived orders for ${reportDateLabel(today())} only.</p>`
+        : `<div class="archived-filter-row"><label>Filter by date <input type="date" id="archivedDate" value="${archivedDateFilter}"></label><button type="button" class="secondary compact" data-action="clearArchivedDate">Show all</button></div>${archivedDateFilter ? `<p class="hint">Filtered to ${reportDateLabel(archivedDateFilter)}.</p>` : '<p class="hint">Showing all archived orders.</p>'}`;
+    const emptyMessage = user.role === 'rider'
+        ? 'No archived orders for today.'
+        : (archivedDateFilter ? 'No archived orders for this date.' : 'No archived orders yet.');
+    return `${dateControl}<section class="panel"><h2>Archived orders</h2><table><thead><tr><th>Order ID</th><th>Name</th><th></th></tr></thead><tbody>${orders.map((o) => `<tr><td>${o.receipt}</td><td>${o.customer.name || 'No customer name'}</td><td><button class="secondary compact btn-oneline" data-order="${o.id}">View details</button></td></tr>`).join('') || `<tr><td colspan="3">${emptyMessage}</td></tr>`}</tbody></table></section>${orderModal()}${callClientAction()}`;
 }
 
 function callClientAction() {
@@ -413,12 +429,13 @@ function orderModal() {
     const phone = (order.customer.contact || '').replace(/[^+\d]/g, '');
     const balance = Math.max(0, order.total - order.amountReceived);
     const change = Math.max(0, order.amountReceived - order.total);
-        const paymentInput = balance > 0 ? `<fieldset class="choice-group"><legend>Payment method</legend><label class="choice"><input type="radio" name="modalPaymentMethod" value="cash" checked> Cash</label><label class="choice"><input type="radio" name="modalPaymentMethod" value="gcash"> GCash</label></fieldset><label>Payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label><button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : `<div class="receipt-change"><span>CHANGE</span><strong>${peso(change)}</strong></div>`;
+        const paymentInput = balance > 0 ? `<fieldset class="choice-group"><legend>Payment method</legend><label class="choice"><input type="radio" name="modalPaymentMethod" value="cash" checked> Cash</label><label class="choice"><input type="radio" name="modalPaymentMethod" value="gcash"> GCash</label></fieldset><label>Payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label>` : `<div class="receipt-change"><span>CHANGE</span><strong>${peso(change)}</strong></div>`;
             const itemEditor = orderEditor(order);
             const customerEditor = user.role === 'rider' ? '' : `<section id="orderEditor" class="edit-order stack hidden"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><label>Delivery fee <input id="modalDeliveryFee" type="number" min="0" step="0.01" value="${order.deliveryFee || 0}"></label>${itemEditor}<button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section>`;
             const headerActions = `${user.role === 'rider' ? '' : `<button class="secondary compact" data-action="toggleOrderEditor">Update</button><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button>`}<button class="secondary compact" data-action="closeModal">Close</button>`;
             const completionAction = order.status !== 'delivered' && Number(order.amountReceived || 0) >= Number(order.total || 0) ? `<button class="compact-action" data-action="${order.fulfillment === 'pickup' ? 'markPickedUp' : 'markDelivered'}">${order.fulfillment === 'pickup' ? 'Confirm pick-up' : 'Mark as delivered'}</button>` : '';
-            return `<div class="modal-backdrop"><section class="receipt modal ${user.role === 'rider' ? 'rider-receipt' : ''}"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions">${headerActions}</div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${phone ? `<a class="call-client" href="tel:${phone}">${order.customer.contact}</a>` : 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div>${customerEditor}<div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>SUBTOTAL</span><strong>${peso(order.total - Number(order.deliveryFee || 0))}</strong></div>${order.deliveryFee ? `<div><span>DELIVERY FEE</span><strong>${peso(order.deliveryFee)}</strong></div>` : ''}<div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div></div><div class="receipt-status">${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}</div>${paymentInput}${completionAction}<div class="receipt-footer-actions"><button class="secondary compact btn-oneline" data-action="shareOrder" data-order-id="${order.id}">Share receipt</button></div></section></div>`;
+            const receiptActions = `${balance > 0 ? `<button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : completionAction}<button class="compact btn-oneline" data-action="shareOrder" data-order-id="${order.id}">Share receipt</button>`;
+            return `<div class="modal-backdrop"><section class="receipt modal ${user.role === 'rider' ? 'rider-receipt' : ''}"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions">${headerActions}</div></div><div class="receipt-meta"><span>${order.receipt}</span><span class="receipt-schedule"><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span><span class="receipt-fulfillment">${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span></span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${phone ? `<a class="call-client" href="tel:${phone}">${order.customer.contact}</a>` : 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div>${customerEditor}<div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>SUBTOTAL</span><strong>${peso(order.total - Number(order.deliveryFee || 0))}</strong></div>${order.deliveryFee ? `<div><span>DELIVERY FEE</span><strong>${peso(order.deliveryFee)}</strong></div>` : ''}<div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div></div><div class="receipt-status">${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}</div>${paymentInput}<div class="receipt-footer-actions receipt-primary-actions">${receiptActions}</div></section></div>`;
             return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions"><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button><button class="secondary" data-action="closeModal">Close</button></div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${completionAction}</section></div>`;
                                 return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions"><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button><button class="secondary" data-action="closeModal">Close</button></div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${completionAction}</section></div>`;
             return `<div class="modal-backdrop"><section class="receipt modal ${user.role === 'rider' ? 'rider-receipt' : ''}"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions"><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button><button class="secondary" data-action="closeModal">Close</button></div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${order.status !== 'delivered' ? '<button class="compact-action" data-action="markDelivered">Mark as delivered</button>' : ''}</section></div>`;
@@ -476,7 +493,64 @@ function reports() {
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${salesRows || '<tr><td>No sales for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${expenseRows || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
         ${reportSummaryVisible ? '' : '<button class="compact-action" data-action="toggleReportSummary">Generate summary</button>'}
-        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Sales by date</h3>${salesSummary || '<p class="hint">No sales recorded.</p>'}<h3>Expenses by date</h3>${expenseSummary || '<p class="hint">No expenses recorded.</p>'}<h3>Expenses by description</h3>${expenseDescriptionSummary || '<p class="hint">No expenses recorded.</p>'}<h3>Products sold</h3><div class="products-sold-grid">${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('')}</div>${Object.keys(productCounts).length ? '' : '<p class="hint">No products sold.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
+        ${reportSummaryVisible ? `<section class="panel range-summary"><h2>Range summary</h2><div class="range-summary-grid"><section class="summary-column"><h3>Sales by date</h3><div class="summary-list">${salesSummary || '<p class="hint">No sales recorded.</p>'}</div><div class="summary-total"><span>Total Sales</span><strong>${peso(sales)}</strong></div><div class="summary-profit"><span>Profit</span><strong>${peso(sales - expenseTotal)}</strong></div></section><section class="summary-column"><h3>Expenses by date</h3><div class="summary-list">${expenseSummary || '<p class="hint">No expenses recorded.</p>'}</div><div class="summary-total"><span>Total Expenses</span><strong>${peso(expenseTotal)}</strong></div><h3 class="summary-secondary-heading">Expenses by description</h3><div class="summary-list">${expenseDescriptionSummary || '<p class="hint">No expenses recorded.</p>'}</div></section></div></section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Export Information</button></div>` : ''}`;
+}
+
+function drawReportSummaryCanvas(context, {
+    sales,
+    expenseTotal,
+    salesByDate,
+    expensesByDate,
+    expensesByDescription,
+}) {
+    const lineHeight = 32;
+    const leftX = 60;
+    const rightX = 630;
+    const salesLines = Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => `${reportDateLabel(date)}: ${peso(dayOrders.reduce((sum, order) => sum + salesAmount(order), 0))}`);
+    const expenseLines = Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `${reportDateLabel(date)}: ${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}`);
+    const descriptionLines = Object.entries(expensesByDescription).sort(([first], [second]) => first.localeCompare(second)).map(([description, total]) => `${description}: ${peso(total)}`);
+    const twoColRows = Math.max(salesLines.length, expenseLines.length, 1);
+    const leftColumnHeight = 2 * lineHeight + (twoColRows * lineHeight) + 2 * lineHeight + 60;
+    const rightColumnHeight = 2 * lineHeight + (twoColRows * lineHeight) + 2 * lineHeight + 34 + (descriptionLines.length || 1) * lineHeight + 60;
+    return {
+        height: Math.max(620, 230 + Math.max(leftColumnHeight, rightColumnHeight)),
+        draw(startY) {
+            let y = startY;
+            context.font = 'bold 26px Lato, Arial, sans-serif';
+            context.fillText('Sales by date', leftX, y);
+            context.fillText('Expenses by date', rightX, y);
+            y += lineHeight;
+            context.font = '22px Lato, Arial, sans-serif';
+            for (let index = 0; index < twoColRows; index += 1) {
+                if (salesLines[index]) context.fillText(salesLines[index], leftX, y);
+                else if (!salesLines.length && index === 0) context.fillText('No sales recorded.', leftX, y);
+                if (expenseLines[index]) context.fillText(expenseLines[index], rightX, y);
+                else if (!expenseLines.length && index === 0) context.fillText('No expenses recorded.', rightX, y);
+                y += lineHeight;
+            }
+            y += 12;
+            context.font = 'bold 26px Lato, Arial, sans-serif';
+            context.fillText('Total Sales', leftX, y);
+            context.fillText('Total Expenses', rightX, y);
+            y += lineHeight;
+            context.font = 'bold 22px Lato, Arial, sans-serif';
+            context.fillText(peso(sales), leftX, y);
+            context.fillText(peso(expenseTotal), rightX, y);
+            y += lineHeight;
+            context.font = 'bold 22px Lato, Arial, sans-serif';
+            context.fillText(`Profit: ${peso(sales - expenseTotal)}`, leftX, y);
+            context.font = 'bold 26px Lato, Arial, sans-serif';
+            context.fillText('Expenses by description', rightX, y);
+            y += lineHeight;
+            context.font = '22px Lato, Arial, sans-serif';
+            if (descriptionLines.length) descriptionLines.forEach((line) => {
+                context.fillText(line, rightX, y);
+                y += lineHeight;
+            });
+            else context.fillText('No expenses recorded.', rightX, y);
+            return y;
+        },
+    };
 }
 
 async function shareReportSummary() {
@@ -499,30 +573,18 @@ async function shareReportSummary() {
         return groups;
     }, {});
     const expensesByDescription = expenseTotalsByDescription(expenses);
-    const contentLines = [
-        { text: `Whole sales: ${peso(sales)}`, section: false },
-        { text: `Whole expenses: ${peso(expenseTotal)}`, section: false },
-        { text: `Orders count: ${orders.length}`, section: false },
-        { text: `Profit: ${peso(sales - expenseTotal)}`, section: false },
-        { text: '', section: false },
-        { text: 'Sales by date', section: true },
-        ...Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => ({ text: `${reportDateLabel(date)}: ${peso(dayOrders.reduce((sum, order) => sum + salesAmount(order), 0))}`, section: false })),
-        { text: '', section: false },
-        { text: 'Expenses by date', section: true },
-        ...Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => ({ text: `${reportDateLabel(date)}: ${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}`, section: false })),
-        { text: '', section: false },
-        { text: 'Expenses by description', section: true },
-        ...Object.entries(expensesByDescription).sort(([first], [second]) => first.localeCompare(second)).map(([description, total]) => ({ text: `${description}: ${peso(total)}`, section: false })),
-        { text: '', section: false },
-        { text: 'Products sold', section: true },
-        ...Object.entries(productCounts).map(([name, count]) => ({ text: `${name}: ${count}`, section: false })),
-    ];
-    const lineHeight = 34;
-    const sectionGap = 8;
-    const bodyHeight = contentLines.reduce((sum, line) => sum + (line.text ? lineHeight : lineHeight / 2) + (line.section ? sectionGap : 0), 0);
+    const layout = drawReportSummaryCanvas(null, {
+        sales,
+        expenseTotal,
+        ordersCount: orders.length,
+        salesByDate,
+        expensesByDate,
+        expensesByDescription,
+        productCounts,
+    });
     const canvas = document.createElement('canvas');
     canvas.width = 1200;
-    canvas.height = Math.max(720, 210 + bodyHeight + 60);
+    canvas.height = layout.height;
     const context = canvas.getContext('2d');
     context.fillStyle = '#fffdf8';
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -549,23 +611,15 @@ async function shareReportSummary() {
     context.lineTo(1140, 162);
     context.stroke();
     context.setLineDash([]);
-    let y = 198;
-    contentLines.forEach((line) => {
-        if (!line.text) {
-            y += lineHeight / 2;
-            return;
-        }
-        if (line.section) {
-            y += sectionGap;
-            context.fillStyle = '#17211f';
-            context.font = 'bold 26px Lato, Arial, sans-serif';
-        } else {
-            context.fillStyle = '#17211f';
-            context.font = '24px Lato, Arial, sans-serif';
-        }
-        context.fillText(line.text, 60, y);
-        y += lineHeight;
-    });
+    drawReportSummaryCanvas(context, {
+        sales,
+        expenseTotal,
+        ordersCount: orders.length,
+        salesByDate,
+        expensesByDate,
+        expensesByDescription,
+        productCounts,
+    }).draw(198);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     const file = new File([blob], `droolys-summary-${reportStart}-to-${reportEnd}.jpg`, { type: 'image/jpeg' });
     const shareText = `${reportStart} to ${reportEnd}. Sales: ${peso(sales)}. Expenses: ${peso(expenseTotal)}. Profit: ${peso(sales - expenseTotal)}.`;
@@ -612,8 +666,15 @@ function hideLoadingScreen() {
     loading.setAttribute('aria-busy', 'false');
 }
 
+function scheduleLoadingScreenHide() {
+    if (loadingHideScheduled) return;
+    loadingHideScheduled = true;
+    const remainingDelay = Math.max(0, LOADING_MIN_MS - (Date.now() - appStartedAt));
+    window.setTimeout(hideLoadingScreen, remainingDelay);
+}
+
 function render() {
-    hideLoadingScreen();
+    scheduleLoadingScreenHide();
     if (!user) {
         renderLogin();
         return;
@@ -669,11 +730,8 @@ async function shareOrder(orderId) {
     canvas.width = 1000;
     canvas.height = 420 + order.items.length * 44 + totals.length * 38;
     const context = canvas.getContext('2d');
-    context.fillStyle = '#fffdf8';
+    context.fillStyle = '#ffffff';
     context.fillRect(0, 0, canvas.width, canvas.height);
-    context.strokeStyle = '#d8d0c4';
-    context.lineWidth = 4;
-    context.strokeRect(28, 28, canvas.width - 56, canvas.height - 56);
     const logo = new Image();
     logo.src = './droolys-logo.jpg';
     await new Promise((resolve) => { logo.onload = resolve; logo.onerror = resolve; });
@@ -687,6 +745,8 @@ async function shareOrder(orderId) {
     context.textAlign = 'right';
     context.fillText(order.receipt, 930, 92);
     context.fillText(`${order.scheduledDate} ${formatTime(order.scheduledTime)}`, 930, 124);
+    context.font = 'bold 20px Lato, Arial, sans-serif';
+    context.fillText(order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY', 930, 154);
     context.textAlign = 'left';
     context.strokeStyle = '#9d958a';
     context.setLineDash([10, 8]);
@@ -700,9 +760,8 @@ async function shareOrder(orderId) {
     context.fillText(order.customer.name || 'No customer name', 70, 232);
     context.font = '22px Lato, Arial, sans-serif';
     context.fillStyle = '#6c665d';
-    context.fillText(order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY', 70, 264);
-    if (order.customer.contact) context.fillText(order.customer.contact, 70, 294);
-    let y = 340;
+    if (order.customer.contact) context.fillText(order.customer.contact, 70, 264);
+    let y = 320;
     context.fillStyle = '#6c665d';
     context.font = 'bold 20px Lato, Arial, sans-serif';
     context.fillText('ITEM', 70, y);
@@ -831,6 +890,10 @@ document.addEventListener('click', (event) => {
     }
     if (target.dataset.action === 'toggleReportSummary') {
         reportSummaryVisible = !reportSummaryVisible;
+        render();
+    }
+    if (target.dataset.action === 'clearArchivedDate') {
+        archivedDateFilter = '';
         render();
     }
     if (target.dataset.action === 'shareReportSummary') shareReportSummary().catch(() => alert('Unable to share the summary image.'));
@@ -1064,7 +1127,7 @@ document.addEventListener('change', (event) => {
         render();
     }
     if (event.target.id === 'archivedDate') {
-        archivedDate = event.target.value;
+        archivedDateFilter = event.target.value;
         render();
     }
     if (event.target.id === 'posCategoryFilter') {

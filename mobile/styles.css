@@ -69,11 +69,14 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .cart-action { position: fixed; z-index: 6; top: 50%; right: 0; display: flex; justify-content: flex-end; transform: translateY(-50%); }
 .cart-toggle { width: auto; }
 .cart-heading h2 { margin: 0 0 8px; }
-.pos-category-filter { margin: 0 0 10px; }
+.pos-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
 .expense-form-columns { display: grid; gap: 8px; }
 .expense-form-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .receipt-footer-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px dashed #9d958a; }
 .receipt-footer-actions button { white-space: nowrap; width: auto; }
+.receipt-footer-actions button[data-action="shareOrder"] { border: 0; background: #ffffff; color: #17211f; box-shadow: none; }
+.receipt-primary-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+.receipt-primary-actions button { width: 100%; min-width: 0; padding: 8px 6px; font-size: 11px; }
 .receipt-confirmation .receipt-footer-actions { justify-content: flex-end; }
 .btn-oneline { white-space: nowrap; padding: 6px 10px; font-size: 11px; }
 .inventory-panel h2 { font-size: 17px; margin: 0; }
@@ -105,7 +108,22 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .edit-order { margin: 14px 0; padding: 14px 0; border-top: 1px dashed #9d958a; border-bottom: 1px dashed #9d958a; }
 .edit-order h3 { margin: 0; font-family: Arial, Helvetica, sans-serif; font-size: 16px; }
-.report-summary-actions { display: grid; gap: 10px; margin: 16px 0 8px; }
+.range-summary { margin-top: 12px; }
+.range-summary > h2 { margin: 0 0 12px; }
+.range-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.summary-column { min-width: 0; }
+.summary-column + .summary-column { padding-left: 14px; border-left: 1px solid var(--line); }
+.summary-column h3 { margin: 0 0 6px; color: var(--ink); }
+.summary-list { display: grid; gap: 0; }
+.summary-list .cart-row { min-width: 0; padding: 6px 0; font-size: 11px; }
+.summary-list .cart-row span { min-width: 0; overflow-wrap: anywhere; }
+.summary-list .cart-row strong { white-space: nowrap; font-size: 11px; }
+.summary-total, .summary-profit { display: grid; gap: 2px; padding-top: 10px; margin-top: 8px; border-top: 1px solid var(--ink); }
+.summary-total span, .summary-profit span { color: var(--muted); font-size: 11px; }
+.summary-total strong, .summary-profit strong { font-size: 14px; }
+.summary-profit { padding-top: 8px; margin-top: 8px; border-top-color: var(--line); }
+.summary-secondary-heading { margin-top: 14px !important; }
+.report-summary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 8px; }
 .report-summary-actions button, [data-action="toggleReportSummary"], [data-action="shareReportSummary"], [data-action="saveExpense"], [data-action="cancelExpenseEdit"] { width: auto; padding: 8px 12px; font-size: 12px; }
 [data-action="toggleReportSummary"] { margin-top: 10px; }
 .notice { border-radius: 10px; padding: 10px; background: #dcfce7; border: 1px solid #86efac; }
@@ -138,6 +156,8 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .rider-receipt .edit-order, .rider-receipt .receipt-top-actions .danger { display: none; }
 .rider-receipt .receipt-top-actions { margin-left: auto; }
 .receipt-meta { padding: 10px 0; border-bottom: 1px dashed #9d958a; }
+.receipt-schedule { display: grid; gap: 3px; justify-items: end; text-align: right; }
+.receipt-fulfillment { color: #17211f; font-weight: 700; }
 .receipt-customer { display: grid; gap: 3px; padding: 14px 0; border-bottom: 1px dashed #9d958a; }
 .receipt-customer strong { color: #17211f; font-size: 14px; }
 .receipt-items { padding: 14px 0; border-bottom: 1px dashed #9d958a; }
