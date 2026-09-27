@@ -98,6 +98,7 @@ let reportView = 'sales';
 let reportSummaryVisible = false;
 let editingExpenseId = null;
 let checkoutFulfillment = 'delivery';
+let confirmationOrderId = null;
 let syncStatus = '';
 let syncServer = null;
 let syncListenerReady = false;
@@ -241,14 +242,8 @@ function appShell(content) {
 
     return `
         <section class="screen">
-            <div class="topbar">
-                <div><h1>Drooly's</h1><p>${user.name} · ${user.role}</p></div>
-                <button class="secondary" data-action="logout">Logout</button>
-            </div>
+            <header class="topbar"><div class="topbar-brand"><strong>Drooly's</strong><small>${user.name} · ${user.role}</small></div><nav class="topnav">${tabs.map(([id, label]) => `<button class="${tab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('')}</nav><button class="secondary compact" data-action="logout">Logout</button></header>
             ${content}
-            <nav class="tabs">
-                ${tabs.map(([id, label]) => `<button class="${tab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('')}
-            </nav>
         </section>`;
 }
 
@@ -256,7 +251,7 @@ function renderLogin(message = '') {
     document.getElementById('app').innerHTML = `
         <section class="login">
             <div class="login-card stack">
-                <div class="brand"><img class="brand-logo" src="droolys-logo.jpg" alt="Drooly's"><p>Pre-order management</p></div>
+                <div class="brand"><img class="landing-logo" src="landing-page.jpg" alt="Drooly's"><p>Pre-order management</p></div>
                 ${message ? `<div class="notice error">${message}</div>` : ''}
                 <label>Email <input id="email" value="admin@droolys.local" autocomplete="username"></label>
                 <label>Password <input id="password" type="password" value="password" autocomplete="current-password"></label>
@@ -332,13 +327,19 @@ function pos() {
             <label>Customer name <input id="customerName" placeholder="Customer name" required></label>
             <label>Contact number <input id="customerContact" type="tel" placeholder="Contact number"></label>
             <fieldset class="choice-group"><legend>Delivery or pick-up</legend><label class="choice"><input type="radio" name="fulfillment" value="delivery" ${checkoutFulfillment === 'delivery' ? 'checked' : ''}> Delivery</label><label class="choice"><input type="radio" name="fulfillment" value="pickup" ${checkoutFulfillment === 'pickup' ? 'checked' : ''}> Pick-up</label></fieldset>
-            <label>Order time <input id="scheduledTime" type="time"></label>
+            <label>Order time <select id="scheduledTime">${timeOptions()}</select></label>
             <label>Address or pick-up note <input id="customerAddress" placeholder="Address or pick-up note"></label>
             <fieldset class="choice-group"><legend>Payment method</legend><label class="choice"><input type="radio" name="paymentMethod" value="cash" checked> Cash</label><label class="choice"><input type="radio" name="paymentMethod" value="gcash"> GCash</label></fieldset>
             <label>Payment received <input id="amountReceived" type="number" min="0" step="0.01" placeholder="Leave blank if unpaid"></label>
             <button style="width:100%;margin-top:10px" data-action="checkout">Order</button>
-        </section>` : ''}`;
+        </section>` : ''}${orderConfirmation()}`;
 }
+
+    function orderConfirmation() {
+        const order = db.orders.find((item) => item.id === confirmationOrderId);
+        if (!order) return '';
+        return `<div class="modal-backdrop"><section class="receipt modal receipt-confirmation"><div class="receipt-top"><div><strong>CHECK ORDER</strong><small>REVIEW BEFORE SERVING</small></div><button class="secondary compact" data-action="closeConfirmation">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span></div><div class="receipt-customer"><strong>${order.customer.name}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span></div><div class="receipt-items">${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>PAYABLE</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div></div><div class="receipt-status">${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}</div><div class="row-actions"><button class="compact-action" data-action="shareOrder" data-order-id="${order.id}">Share</button><button class="secondary compact-action" data-action="closeConfirmation">Done</button></div></section></div>`;
+    }
 
 function preorders() {
     const orders = db.orders.filter((order) => order.mode === 'preorder' && order.status !== 'delivered' && (user.role !== 'rider' || order.scheduledDate === today())).sort((a, b) => `${a.scheduledDate}T${a.scheduledTime || '23:59'}`.localeCompare(`${b.scheduledDate}T${b.scheduledTime || '23:59'}`));
@@ -355,7 +356,7 @@ function preorders() {
         </section>
         <section class="panel" style="margin-top:12px">
             <h2>Orders</h2>
-            <table><thead><tr><th>Time</th><th>Customer</th><th>Order</th></tr></thead><tbody>${orders.map((o) => `<tr><td><strong>${formatTime(o.scheduledTime)}</strong></td><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.fulfillment === 'pickup' ? 'Pick-up' : 'Delivery'}</small></td><td><small>${o.status} · Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small><br><button class="secondary compact" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
+            <table><thead><tr><th>Time</th><th>Customer</th><th>Order</th></tr></thead><tbody>${orders.map((o) => `<tr><td><strong>${formatTime(o.scheduledTime)}</strong></td><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.fulfillment === 'pickup' ? 'Pick-up' : 'Delivery'}</small></td><td><small>Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small><br><button class="secondary compact" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
         </section>
         ${orderModal()}${callClientAction()}`;
 }
@@ -414,7 +415,7 @@ function legacyReports() {
     const selectedExpenses = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
     return `
         <div class="report-range-row"><label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
-        <section class="panel stack"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount per product"><div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
+        <section class="panel stack compact-form"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount per product"><div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(salesAmount(o))}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}<br><small>${expense.quantity} x ${peso(expense.amount)}</small></td><td>${peso(calculateExpenseTotal(expense))}</td><td><div class="row-actions"><button class="secondary compact" data-edit-expense="${expense.id}">Edit</button><button class="danger compact" data-delete-expense="${expense.id}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
         ${reportSummaryVisible ? '' : '<button class="compact-action" data-action="toggleReportSummary">Generate summary</button>'}
@@ -447,7 +448,7 @@ function reports() {
     const expenseSummary = Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `<div class="cart-row"><span>${reportDateLabel(date)}</span><strong>${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}</strong></div>`).join('');
     return `
         <div class="report-range-row"><label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
-        <section class="panel stack"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount per product"><div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
+        <section class="panel stack compact-form"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount per product"><div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${salesRows || '<tr><td>No sales for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${expenseRows || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
         ${reportSummaryVisible ? '' : '<button class="compact-action" data-action="toggleReportSummary">Generate summary</button>'}
@@ -542,19 +543,19 @@ async function shareReportSummary() {
 
 function inventory() {
     return `
-        <section class="panel stack">
+        <section class="panel stack compact-form">
             <div class="section-heading"><h2>Add / Update Product</h2><button class="secondary compact" data-action="toggleProductEditor">Show editor</button></div>
             <div id="productEditor" class="stack hidden">
             <input id="pId" type="hidden">
             <input id="pName" placeholder="Product name">
             <input id="pCategory" placeholder="Category">
             <input id="pPrice" type="number" placeholder="Price">
-            <button data-action="saveProduct">Save Product</button>
+            <button class="compact-action" data-action="saveProduct">Save Product</button>
             </div>
         </section>
         <section class="panel" style="margin-top:12px">
             <h2>Products</h2>
-            <table><tbody>${db.products.map((p) => `<tr><td>${p.name}<br><small>${p.category}</small></td><td>${peso(p.price)}</td><td><details class="product-actions"><summary>Actions</summary><div class="row-actions"><button class="secondary compact" data-edit-product="${p.id}">Edit</button><button class="${p.active ? 'danger' : ''} secondary compact" data-toggle-product="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button><button class="danger compact" data-delete-product="${p.id}">Delete</button></div></details></td></tr>`).join('')}</tbody></table>
+            <table><tbody>${db.products.map((p) => `<tr><td>${p.name}<br><small>${p.category}</small><br><small class="${p.active ? 'status-active' : 'status-inactive'}">${p.active ? 'Active' : 'Inactive'}</small></td><td>${peso(p.price)}</td><td><details class="product-actions"><summary>Actions</summary><div class="row-actions"><button class="secondary compact" data-edit-product="${p.id}">Edit</button><button class="${p.active ? 'danger' : ''} secondary compact" data-toggle-product="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button><button class="danger compact" data-delete-product="${p.id}">Delete</button></div></details></td></tr>`).join('')}</tbody></table>
         </section>
         `;
 }
@@ -567,6 +568,7 @@ function render() {
     setupSyncListener();
     const views = { dashboard, pos, preorders, archived, reports, inventory };
     document.getElementById('app').innerHTML = appShell(views[tab]());
+    if (modalOrderId) document.querySelector('.receipt-top-actions')?.insertAdjacentHTML('afterbegin', `<button class="secondary compact" data-action="shareOrder" data-order-id="${modalOrderId}">Share</button>`);
     if (modalOrderId && db.orders.find((order) => order.id === modalOrderId)?.status === 'delivered') {
         document.getElementById('orderEditor')?.remove();
         document.getElementById('orderItemEditor')?.remove();
@@ -576,6 +578,8 @@ function render() {
         paymentButton?.previousElementSibling?.remove();
         paymentButton?.remove();
     }
+    const modalTimeInput = document.getElementById('modalScheduledTime');
+    if (modalTimeInput) modalTimeInput.outerHTML = `<select id="modalScheduledTime">${timeOptions(modalTimeInput.value)}</select>`;
     const fulfillmentSelect = document.getElementById('modalFulfillment');
     if (fulfillmentSelect) {
         const selected = fulfillmentSelect.value;
@@ -589,7 +593,15 @@ function render() {
         if (changeRow) receiptTotals.append(changeRow);
         [findRow('TOTAL'), findRow('BALANCE'), findRow('RECEIVED'), changeRow].filter(Boolean).forEach((row) => receiptTotals.append(row));
     }
-    document.querySelectorAll('[data-action="shareReportSummary"]').forEach((button) => { button.textContent = 'Sales, Expenses'; });
+    document.querySelectorAll('[data-action="shareReportSummary"]').forEach((button) => { button.textContent = 'Export Information'; });
+}
+
+async function shareOrder(orderId) {
+    const order = db.orders.find((item) => item.id === Number(orderId));
+    if (!order) return;
+    const text = `${order.receipt} - ${order.customer.name || 'Customer'}\nPayable: ${peso(order.total)}\nReceived: ${peso(order.amountReceived)}\n${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}`;
+    if (navigator.share) await navigator.share({ title: `Order ${order.receipt}`, text });
+    else if (navigator.clipboard) await navigator.clipboard.writeText(text);
 }
 
 function addToCart(id) {
@@ -640,6 +652,7 @@ function checkout() {
         status: amountReceived >= total ? 'paid' : 'partial',
         createdAt: new Date().toISOString(),
     });
+    confirmationOrderId = db.orders[db.orders.length - 1].id;
     cart = new Map();
     persist();
     tab = 'pos';
@@ -658,6 +671,11 @@ document.addEventListener('click', (event) => {
         cartOpen = !cartOpen;
         render();
     }
+    if (target.dataset.action === 'closeConfirmation') {
+        confirmationOrderId = null;
+        render();
+    }
+    if (target.dataset.action === 'shareOrder') shareOrder(target.dataset.orderId).catch(() => alert('Unable to share this order.'));
     if (target.dataset.action === 'startSync') startSync().catch(() => { syncStatus = 'Unable to start Wi-Fi sync.'; render(); });
     if (target.dataset.action === 'connectSync') connectSync().catch(() => { syncStatus = 'Unable to connect to Admin. Check the IP and Wi-Fi.'; render(); });
     if (target.dataset.action === 'showSales') {

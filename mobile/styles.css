@@ -25,23 +25,24 @@ table { width: 100%; border-collapse: collapse; }
 th, td { padding: 10px 6px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 
-.screen { min-height: 100vh; padding: env(safe-area-inset-top) 14px calc(78px + env(safe-area-inset-bottom)); }
+.screen { min-height: 100vh; padding: env(safe-area-inset-top) 14px 20px; }
 .login { display: grid; align-content: center; min-height: 100vh; padding: 20px; }
 .login-card, .panel, .metric, .product, .cart { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
 .brand { margin-bottom: 18px; }
-.brand-logo { display: block; width: min(220px, 75vw); height: auto; margin: 0 auto 10px; object-fit: contain; }
+.brand-logo, .landing-logo { display: block; width: min(220px, 75vw); height: auto; margin: 0 auto 10px; object-fit: contain; }
 .brand h1 { margin: 0; font-size: 34px; }
 .brand p, .hint { color: var(--muted); margin: 6px 0 0; }
 .stack { display: grid; gap: 12px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .section-heading h2 { margin: 0; }
 .compact { padding: 8px 10px; font-size: 12px; }
-.topbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 0; }
-.topbar h1 { margin: 0; font-size: 24px; }
-.topbar p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
-.tabs { position: fixed; z-index: 5; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(6, 1fr); background: #fff; border-top: 1px solid var(--line); padding: 7px 8px calc(7px + env(safe-area-inset-bottom)); }
-.tabs button { background: transparent; color: var(--muted); padding: 9px 4px; font-size: 12px; border-radius: 8px; }
-.tabs button.active { background: #ffe1ee; color: var(--brand-dark); }
+.topbar { display: flex; align-items: center; gap: 10px; padding: 10px 0 14px; border-bottom: 1px solid var(--line); }
+.topbar-brand { min-width: 92px; display: grid; gap: 2px; }
+.topbar-brand strong { font-size: 19px; }
+.topbar-brand small { color: var(--muted); font-size: 10px; }
+.topnav { display: flex; flex: 1; gap: 4px; overflow-x: auto; }
+.topnav button { flex: 0 0 auto; background: transparent; color: var(--muted); padding: 8px 7px; font-size: 11px; border-radius: 8px; }
+.topnav button.active { background: #ffe1ee; color: var(--brand-dark); }
 .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .home-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .home-metrics .metric { padding: 10px 8px; min-width: 0; }
@@ -75,6 +76,12 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .choice { display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); }
 .choice input { width: auto; margin: 0; accent-color: var(--brand); }
 .item-requirements { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.compact-form { gap: 8px; }
+.compact-form input { padding: 9px 10px; }
+.compact-form .compact-action { padding: 8px 12px; }
+.status-active, .status-inactive { font-weight: 700; }
+.status-active { color: #15803d; }
+.status-inactive { color: var(--danger); }
 .products-sold-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 .product-actions { position: relative; }
 .product-actions summary { cursor: pointer; color: var(--brand-dark); font-size: 12px; font-weight: 700; list-style: none; }
@@ -127,6 +134,7 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .receipt-totals { display: grid; gap: 6px; padding: 14px 0; border-bottom: 1px dashed #9d958a; font-size: 13px; }
 .receipt-change { display: flex; justify-content: space-between; gap: 12px; }
 .receipt-status { padding: 14px 0; text-align: center; letter-spacing: 1px; }
+.receipt-confirmation { max-width: 420px; }
 .report-actions { display: flex; gap: 8px; margin: 12px 0; }
 .report-actions button { flex: 1; }
 .bar-chart { min-height: 190px; display: flex; align-items: end; gap: 8px; overflow-x: auto; padding: 16px 4px 0; border-bottom: 1px solid var(--line); }
