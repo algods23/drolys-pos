@@ -605,7 +605,7 @@ async function shareReportSummary() {
     canvas.width = 1200;
     canvas.height = layout.height;
     const context = canvas.getContext('2d');
-    context.fillStyle = '#fffdf8';
+    context.fillStyle = '#ffffff';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.strokeStyle = '#d8d0c4';
     context.lineWidth = 3;

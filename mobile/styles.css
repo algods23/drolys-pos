@@ -40,10 +40,10 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .topbar-logo { display: block; height: 26px; width: auto; max-width: 120px; object-fit: contain; }
 .topbar-user { color: var(--ink); font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.loading-screen { position: fixed; z-index: 100; inset: 0; display: grid; place-content: center; gap: 22px; background: var(--bg); }
+.loading-screen { position: fixed; z-index: 100; inset: 0; display: grid; place-content: center; gap: 22px; background: var(--brand); }
 .loading-logo { width: min(200px, 62vw); height: auto; object-fit: contain; }
 .loading-dots { display: flex; justify-content: center; gap: 8px; }
-.loading-dots span { width: 9px; height: 9px; border-radius: 50%; background: var(--brand); animation: loading-dot 1.2s ease-in-out infinite; }
+.loading-dots span { width: 9px; height: 9px; border-radius: 50%; background: #ffffff; animation: loading-dot 1.2s ease-in-out infinite; }
 .loading-dots span:nth-child(2) { animation-delay: .15s; }
 .loading-dots span:nth-child(3) { animation-delay: .3s; }
 .loading-dots span:nth-child(4) { animation-delay: .45s; }
