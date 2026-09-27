@@ -85,6 +85,7 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .edit-order h3 { margin: 0; font-family: Arial, Helvetica, sans-serif; font-size: 16px; }
 .report-summary-actions { display: grid; gap: 10px; margin: 16px 0 8px; }
 .report-summary-actions button, [data-action="toggleReportSummary"], [data-action="shareReportSummary"], [data-action="saveExpense"], [data-action="cancelExpenseEdit"] { width: auto; padding: 8px 12px; font-size: 12px; }
+[data-action="toggleReportSummary"] { margin-top: 10px; }
 .notice { border-radius: 10px; padding: 10px; background: #dcfce7; border: 1px solid #86efac; }
 .notice.error { background: #fee2e2; border-color: #fca5a5; }
 .low { color: var(--danger); font-weight: 700; }

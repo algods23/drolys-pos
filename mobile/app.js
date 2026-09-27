@@ -27,7 +27,7 @@ const timeOptions = (selected = '') => [''].concat(Array.from({ length: 48 }, (_
 const seed = {
     users: [
         { id: 1, name: 'Admin', email: 'admin@droolys.local', password: 'password', role: 'admin' },
-        { id: 2, name: 'Algods', email: 'Algods@droolys.local', password: 'password', role: 'rider' },
+        { id: 2, name: 'Algods', email: 'algods@droolys.local', password: 'password', role: 'rider' },
     ],
     categories: ['Burgers', 'Sides', 'Drinks'],
     products: [
@@ -71,7 +71,7 @@ db.expenses = (db.expenses || []).map((expense) => ({
     amount: Number(expense.amount || 0),
 }));
 db.products = db.products.map((product) => ({ ...product, active: product.active !== false }));
-db.users = db.users.map((account) => account.id === 2 ? { ...account, name: 'Algods', email: 'Algods@droolys.local', role: 'rider' } : account);
+db.users = db.users.map((account) => account.id === 2 ? { ...account, name: 'Algods', email: 'algods@droolys.local', role: 'rider' } : account);
 db.orders = db.orders.map((order) => ({
     ...order,
     customer: order.customer || {},
@@ -84,7 +84,7 @@ db.orders = db.orders.map((order) => ({
     status: order.status || (order.amountReceived >= order.total ? 'paid' : 'partial'),
 }));
 let user = store.session();
-if (user?.id === 2) user = { ...user, name: 'Algods', role: 'rider' };
+if (user?.id === 2) user = { ...user, name: 'Algods', email: 'algods@droolys.local', role: 'rider' };
 let tab = 'dashboard';
 let cart = new Map();
 let scheduleDate = tomorrow();
@@ -281,10 +281,10 @@ function dashboard() {
     });
     const chartValues = Object.entries(chartDays).sort(([a], [b]) => a.localeCompare(b));
     const chartMax = Math.max(...chartValues.map(([, value]) => value), 1);
-    const paidSelectedDayOrders = selectedDayOrders.filter(isPaidOrder);
-    const selectedDaySales = paidSelectedDayOrders.reduce((sum, order) => sum + salesAmount(order), 0);
-    const selectedDayCash = paidSelectedDayOrders.reduce((sum, order) => sum + paymentBreakdown(order).cash, 0);
-    const selectedDayGcash = paidSelectedDayOrders.reduce((sum, order) => sum + paymentBreakdown(order).gcash, 0);
+    const todaySalesOrders = db.orders.filter((order) => reportDate(order) === today() && isPaidOrder(order));
+    const selectedDaySales = todaySalesOrders.reduce((sum, order) => sum + salesAmount(order), 0);
+    const selectedDayCash = todaySalesOrders.reduce((sum, order) => sum + paymentBreakdown(order).cash, 0);
+    const selectedDayGcash = todaySalesOrders.reduce((sum, order) => sum + paymentBreakdown(order).gcash, 0);
     return `
             <div class="metric-grid home-metrics">
                 <div class="metric today-sales"><span>Today sales</span><strong>${peso(selectedDaySales)}</strong><small class="metric-detail">Cash ${peso(selectedDayCash)}</small><small class="metric-detail">GCash ${peso(selectedDayGcash)}</small></div>
@@ -373,7 +373,7 @@ function callClientAction() {
 }
 
 function orderEditor(order) {
-    if (user.role === 'rider') return '';
+    if (user.role === 'rider' || order.status === 'delivered') return '';
     const productOptions = (selectedId = '') => db.products.filter((product) => product.active).map((product) => `<option value="${product.id}" ${String(product.id) === String(selectedId) ? 'selected' : ''}>${product.name}</option>`).join('');
     const itemRows = order.items.map((item, index) => `<div class="modal-order-item" data-item-index="${index}"><select class="modal-item-product">${productOptions(item.productId || db.products.find((product) => product.name === item.name)?.id)}</select><div class="modal-item-quantity-controls"><button type="button" class="secondary compact" data-action="adjustOrderItem" data-delta="-1">-</button><input class="modal-item-quantity" type="number" min="0" step="1" value="${item.qty}"><button type="button" class="secondary compact" data-action="adjustOrderItem" data-delta="1">+</button></div></div>`).join('');
     return `<section id="orderItemEditor" class="order-item-editor stack hidden"><h3>Items</h3><div id="modalOrderItems">${itemRows}</div><div class="row-actions"><select id="modalNewProduct"><option value="">Add product</option>${productOptions()}</select><button type="button" class="secondary compact" data-action="addOrderItem">Add</button></div><p class="hint">Additional quantities are added to the existing product row.</p></section>`;
@@ -567,6 +567,15 @@ function render() {
     setupSyncListener();
     const views = { dashboard, pos, preorders, archived, reports, inventory };
     document.getElementById('app').innerHTML = appShell(views[tab]());
+    if (modalOrderId && db.orders.find((order) => order.id === modalOrderId)?.status === 'delivered') {
+        document.getElementById('orderEditor')?.remove();
+        document.getElementById('orderItemEditor')?.remove();
+        document.querySelectorAll('[data-action="toggleOrderEditor"], [data-action="deleteOrder"]').forEach((button) => button.remove());
+        const paymentButton = document.querySelector('[data-action="updatePayment"]');
+        paymentButton?.previousElementSibling?.remove();
+        paymentButton?.previousElementSibling?.remove();
+        paymentButton?.remove();
+    }
     const fulfillmentSelect = document.getElementById('modalFulfillment');
     if (fulfillmentSelect) {
         const selected = fulfillmentSelect.value;
@@ -674,6 +683,7 @@ document.addEventListener('click', (event) => {
         const found = db.users.find((u) => u.email === email && u.password === password);
         if (!found) return renderLogin('Invalid login.');
         user = { id: found.id, name: found.name, role: found.role };
+        tab = 'dashboard';
         store.setSession(user);
         render();
     }
