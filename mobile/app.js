@@ -98,6 +98,9 @@ let reportView = 'sales';
 let reportSummaryVisible = false;
 let editingExpenseId = null;
 let checkoutFulfillment = 'delivery';
+let syncStatus = '';
+let syncServer = null;
+let syncListenerReady = false;
 
 function calculateExpenseTotal(expense) {
     return Number(expense.quantity || 1) * Number(expense.amount || 0);
@@ -113,6 +116,14 @@ function isPaidOrder(order) {
 
 function paymentMethodsLabel(order) {
     return [...new Set((order.payments || []).map((payment) => String(payment.method || 'cash').toUpperCase()))].join(' + ') || String(order.paymentMethod || 'cash').toUpperCase();
+}
+
+function nextReceiptNumber() {
+    const highest = db.orders.reduce((max, order) => {
+        const match = String(order.receipt || '').match(/^DRL-(\d+)$/);
+        return match ? Math.max(max, Number(match[1])) : max;
+    }, 0);
+    return `DRL-${String(highest + 1).padStart(2, '0')}`;
 }
 
 function reportDate(order) {
@@ -142,6 +153,68 @@ async function shareWithAndroid(file, blob, text) {
 
 function persist() {
     store.write(db);
+}
+
+function syncPlugin() {
+    return window.Capacitor?.Plugins?.WifiSync;
+}
+
+function syncPayload() {
+    return JSON.stringify({ orders: db.orders });
+}
+
+function mergeSyncedOrders(payload) {
+    const incoming = JSON.parse(payload || '{}').orders || [];
+    const localOrders = new Map(db.orders.map((order) => [order.receipt, order]));
+    let updated = 0;
+    incoming.forEach((remote) => {
+        const local = localOrders.get(remote.receipt);
+        if (!local) return;
+        local.status = remote.status;
+        local.amountReceived = Number(remote.amountReceived || 0);
+        local.change = Number(remote.change || 0);
+        local.paymentMethod = remote.paymentMethod || local.paymentMethod;
+        local.payments = remote.payments || local.payments || [];
+        updated += 1;
+    });
+    persist();
+    return updated;
+}
+
+async function setupSyncListener() {
+    if (syncListenerReady || !syncPlugin()?.addListener) return;
+    syncListenerReady = true;
+    await syncPlugin().addListener('syncReceived', async ({ payload }) => {
+        if (user.role !== 'admin') return;
+        const updated = mergeSyncedOrders(payload);
+        syncStatus = `Rider update received: ${updated} matching order${updated === 1 ? '' : 's'} updated.`;
+        if (syncServer) await syncPlugin().setServerPayload({ payload: syncPayload() });
+        render();
+    });
+}
+
+function syncPanel() {
+    if (!syncPlugin()) return '';
+    if (user.role === 'admin') return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Start sync on Admin, then connect Rider on the same Wi-Fi.</p><button class="compact-action" data-action="startSync">Start sync</button>${syncServer ? `<p class="notice">Rider connection: <strong>${syncServer.host}:${syncServer.port}</strong></p>` : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
+    return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Enter the Admin address while both devices use the same Wi-Fi.</p><div class="form-grid"><label>Admin IP address <input id="syncHost" placeholder="192.168.1.10"></label><label>Port <input id="syncPort" type="number" value="8765"></label></div><button class="compact-action" data-action="connectSync">Sync with Admin</button>${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
+}
+
+async function startSync() {
+    const result = await syncPlugin().startServer({ port: 8765 });
+    syncServer = result;
+    await syncPlugin().setServerPayload({ payload: syncPayload() });
+    syncStatus = 'Waiting for Rider to connect.';
+    render();
+}
+
+async function connectSync() {
+    const host = document.getElementById('syncHost')?.value.trim();
+    const port = Number(document.getElementById('syncPort')?.value || 8765);
+    if (!host) return;
+    const result = await syncPlugin().connect({ host, port, payload: syncPayload() });
+    const updated = mergeSyncedOrders(result.payload);
+    syncStatus = `Sync complete: ${updated} matching order${updated === 1 ? '' : 's'} updated.`;
+    render();
 }
 
 function appShell(content) {
@@ -210,14 +283,14 @@ function dashboard() {
             <h2>Sales chart</h2>
             <div class="form-grid"><label>From <input type="date" id="homeStart" value="${homeStart}"></label><label>To <input type="date" id="homeEnd" value="${homeEnd}"></label></div>
             <div class="bar-chart">${chartValues.length ? chartValues.map(([date, value]) => `<div class="bar-column"><span>${peso(value)}</span><div class="bar" style="height:${Math.max(8, value / chartMax * 150)}px"></div><small>${date.slice(5)}</small></div>`).join('') : '<p class="hint">No sales in this range.</p>'}</div>
-        </section>`;
+        </section>${syncPanel()}`;
 }
 
 function riderDashboard() {
     const orders = db.orders.filter((order) => order.scheduledDate === today() && order.status !== 'delivered');
     const sales = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
     const toCollect = orders.reduce((sum, order) => sum + Math.max(0, Number(order.total || 0) - Number(order.amountReceived || 0)), 0);
-    return `<section class="panel stack"><h2>Today's deliveries</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>To collect</span><strong>${peso(toCollect)}</strong></div></div><p class="hint">${orders.length} scheduled order${orders.length === 1 ? '' : 's'} today.</p></section>`;
+    return `<section class="panel stack"><h2>Today's deliveries</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>To collect</span><strong>${peso(toCollect)}</strong></div></div><p class="hint">${orders.length} scheduled order${orders.length === 1 ? '' : 's'} today.</p></section>${syncPanel()}`;
 }
 
 function pos() {
@@ -304,7 +377,7 @@ function orderModal() {
     const phone = (order.customer.contact || '').replace(/[^+\d]/g, '');
     const balance = Math.max(0, order.total - order.amountReceived);
     const change = Math.max(0, order.amountReceived - order.total);
-        const paymentInput = balance > 0 ? `<label>Additional payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label><label>Payment method <select id="modalPaymentMethod"><option value="cash">Cash</option><option value="gcash">GCash</option></select></label><button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : `<div class="receipt-change"><span>CHANGE</span><strong>${peso(change)}</strong></div>`;
+        const paymentInput = balance > 0 ? `<label>Payment method <select id="modalPaymentMethod"><option value="cash">Cash</option><option value="gcash">GCash</option></select></label><label>Payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label><button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : `<div class="receipt-change"><span>CHANGE</span><strong>${peso(change)}</strong></div>`;
             const itemEditor = orderEditor(order);
             const customerEditor = user.role === 'rider' ? '' : `<section id="orderEditor" class="edit-order stack hidden"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><label>Delivery fee <input id="modalDeliveryFee" type="number" min="0" step="0.01" value="${order.deliveryFee || 0}"></label>${itemEditor}<button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section>`;
             const headerActions = `${user.role === 'rider' ? '' : `<button class="secondary compact" data-action="toggleOrderEditor">Update</button><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button>`}<button class="secondary compact" data-action="closeModal">Close</button>`;
@@ -382,6 +455,14 @@ async function shareReportSummary() {
     const expenseTotal = expenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0);
     const productCounts = {};
     orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
+    const salesByDate = orders.reduce((groups, order) => {
+        (groups[reportDate(order)] ||= []).push(order);
+        return groups;
+    }, {});
+    const expensesByDate = expenses.reduce((groups, expense) => {
+        (groups[expense.date] ||= []).push(expense);
+        return groups;
+    }, {});
     const canvas = document.createElement('canvas');
     canvas.width = 1200;
     canvas.height = Math.max(980, 360 + (orders.length + expenses.length + Object.keys(productCounts).length) * 42);
@@ -417,10 +498,16 @@ async function shareReportSummary() {
         `Orders count: ${orders.length}`,
         `Profit: ${peso(sales - expenseTotal)}`,
         '',
+        'Sales by date:',
+        ...Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => `${reportDateLabel(date)}: ${peso(dayOrders.reduce((sum, order) => sum + salesAmount(order), 0))}`),
+        '',
+        'Expenses by date:',
+        ...Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `${reportDateLabel(date)}: ${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}`),
+        '',
         'Products sold:',
         ...Object.entries(productCounts).map(([name, count]) => `${name}: ${count}`),
         '',
-        'Expenses:',
+        'Expense details:',
         ...expenses.map((expense) => `${expense.description}: ${expense.quantity} x ${peso(expense.amount)} = ${peso(calculateExpenseTotal(expense))}`),
     ];
     context.font = '25px Lato, Arial, sans-serif';
@@ -467,6 +554,7 @@ function render() {
         renderLogin();
         return;
     }
+    setupSyncListener();
     const views = { dashboard, pos, preorders, archived, reports, inventory };
     document.getElementById('app').innerHTML = appShell(views[tab]());
     const receiptTotals = document.querySelector('.receipt-totals');
@@ -477,6 +565,7 @@ function render() {
         if (changeRow) receiptTotals.append(changeRow);
         [findRow('TOTAL'), findRow('BALANCE'), findRow('RECEIVED'), changeRow].filter(Boolean).forEach((row) => receiptTotals.append(row));
     }
+    document.querySelectorAll('[data-action="shareReportSummary"]').forEach((button) => { button.textContent = 'Sales, Expenses'; });
 }
 
 function addToCart(id) {
@@ -506,7 +595,7 @@ function checkout() {
     const paymentMethod = document.getElementById('paymentMethod')?.value || 'cash';
     db.orders.push({
         id: Date.now(),
-        receipt: `DRL-${philippineDate().replace(/-/g, '')}-${String(Date.now()).slice(-4)}`,
+        receipt: nextReceiptNumber(),
         userId: user.id,
         mode: 'preorder',
         scheduledDate: scheduleDate,
@@ -545,6 +634,8 @@ document.addEventListener('click', (event) => {
         cartOpen = !cartOpen;
         render();
     }
+    if (target.dataset.action === 'startSync') startSync().catch(() => { syncStatus = 'Unable to start Wi-Fi sync.'; render(); });
+    if (target.dataset.action === 'connectSync') connectSync().catch(() => { syncStatus = 'Unable to connect to Admin. Check the IP and Wi-Fi.'; render(); });
     if (target.dataset.action === 'showSales') {
         reportView = 'sales';
         render();
