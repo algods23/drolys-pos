@@ -102,9 +102,28 @@ let confirmationOrderId = null;
 let syncStatus = '';
 let syncServer = null;
 let syncListenerReady = false;
+let posCategoryFilter = 'All';
+let archivedDate = today();
 
 function calculateExpenseTotal(expense) {
     return Number(expense.quantity || 1) * Number(expense.amount || 0);
+}
+
+function expenseTotalsByDescription(expenses) {
+    return expenses.reduce((groups, expense) => {
+        groups[expense.description] = (groups[expense.description] || 0) + calculateExpenseTotal(expense);
+        return groups;
+    }, {});
+}
+
+function productCategoryOptions() {
+    const fromProducts = db.products.map((product) => product.category).filter(Boolean);
+    const fromSeed = db.categories || [];
+    return [...new Set([...fromSeed, ...fromProducts])].sort((a, b) => a.localeCompare(b));
+}
+
+function expenseFormMarkup() {
+    return `<div class="expense-form-columns"><label>Description <input id="expenseDescription" placeholder="Description"></label><div class="expense-form-pair"><label>Quantity <input id="expenseQuantity" type="number" min="1" step="1" placeholder="Quantity"></label><label>Price <input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Price"></label></div></div>`;
 }
 
 function salesAmount(order) {
@@ -242,7 +261,7 @@ function appShell(content) {
 
     return `
         <section class="screen">
-            <div class="topbar"><div class="topbar-brand"><strong>Drooly's</strong><small>${user.name} · ${user.role}</small></div><button class="secondary compact" data-action="logout">Logout</button></div>
+            <div class="topbar"><div class="topbar-brand"><img class="topbar-logo" src="landing-page.jpg" alt="Drooly's"><span class="topbar-user">${user.name}</span></div><button class="secondary compact" data-action="logout">Logout</button></div>
             ${content}
             <nav class="tabs">${tabs.map(([id, label]) => `<button class="${tab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('')}</nav>
         </section>`;
@@ -304,19 +323,22 @@ function riderDashboard() {
 function pos() {
     const items = [...cart.values()];
     const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+    const categories = ['All', ...productCategoryOptions()];
+    const visibleProducts = db.products.filter((product) => product.active && (posCategoryFilter === 'All' || product.category === posCategoryFilter));
     return `
         <label style="margin:10px 0">Schedule date <input type="date" id="scheduleDate" min="${today()}" value="${scheduleDate}"></label>
+        <label class="pos-category-filter">Category <select id="posCategoryFilter">${categories.map((category) => `<option value="${category}" ${category === posCategoryFilter ? 'selected' : ''}>${category}</option>`).join('')}</select></label>
         <div class="products">
-            ${db.products.filter((p) => p.active).map((p) => `
+            ${visibleProducts.map((p) => `
                 <button class="product" data-add="${p.id}">
                     <strong>${p.name}</strong>
                     <span>${peso(p.price)}</span>
-                    <small>Available for pre-order</small>
-                </button>`).join('')}
+                    <small>${p.category}</small>
+                </button>`).join('') || '<p class="hint">No products in this category.</p>'}
         </div>
         <div class="cart-action"><button class="cart-toggle" data-action="toggleCart">${cartOpen ? 'Hide cart' : `Open cart${items.length ? ` (${items.length})` : ''}`}</button></div>
         ${cartOpen ? `<section class="cart">
-            <div class="cart-heading"><h2>Cart</h2><button class="secondary" data-action="toggleCart">Hide</button></div>
+            <div class="cart-heading"><h2>Cart</h2></div>
             ${items.length ? items.map((item) => `
                 <div class="cart-row">
                     <span>${item.name}<br><small>${peso(item.price)} each</small></span>
@@ -339,7 +361,7 @@ function pos() {
     function orderConfirmation() {
         const order = db.orders.find((item) => item.id === confirmationOrderId);
         if (!order) return '';
-        return `<div class="modal-backdrop"><section class="receipt modal receipt-confirmation"><div class="receipt-top"><div><strong>CHECK ORDER</strong><small>REVIEW BEFORE SERVING</small></div><button class="secondary compact" data-action="closeConfirmation">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span></div><div class="receipt-customer"><strong>${order.customer.name}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span></div><div class="receipt-items">${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>PAYABLE</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div></div><div class="receipt-status">${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}</div><div class="row-actions"><button class="compact-action" data-action="shareOrder" data-order-id="${order.id}">Share</button><button class="secondary compact-action" data-action="closeConfirmation">Done</button></div></section></div>`;
+        return `<div class="modal-backdrop"><section class="receipt modal receipt-confirmation"><div class="receipt-top"><div><strong>CHECK ORDER</strong><small>REVIEW BEFORE SERVING</small></div><button class="secondary compact" data-action="closeConfirmation">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span></div><div class="receipt-customer"><strong>${order.customer.name}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span></div><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div></div><div class="receipt-status">${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}</div><div class="receipt-footer-actions"><button class="secondary compact btn-oneline" data-action="shareOrder" data-order-id="${order.id}">Share receipt</button><button class="secondary compact btn-oneline" data-action="closeConfirmation">Done</button></div></section></div>`;
     }
 
 function preorders() {
@@ -363,8 +385,8 @@ function preorders() {
 }
 
 function archived() {
-    const orders = db.orders.filter((order) => order.status === 'delivered');
-    return `<section class="panel"><h2>Archived orders</h2><table><tbody>${orders.map((o) => `<tr><td>${o.receipt}<br><small>${o.customer.name || 'No customer name'}</small></td><td>${o.scheduledDate}</td><td><button class="secondary compact" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td>No archived orders.</td></tr>'}</tbody></table></section>${orderModal()}${callClientAction()}`;
+    const orders = db.orders.filter((order) => order.status === 'delivered' && order.scheduledDate === archivedDate);
+    return `<label>Date <input type="date" id="archivedDate" value="${archivedDate}"></label><section class="panel"><h2>Archived orders</h2><table><thead><tr><th>Order ID</th><th>Name</th><th></th></tr></thead><tbody>${orders.map((o) => `<tr><td>${o.receipt}</td><td>${o.customer.name || 'No customer name'}</td><td><button class="secondary compact btn-oneline" data-order="${o.id}">View details</button></td></tr>`).join('') || '<tr><td colspan="3">No archived orders for this date.</td></tr>'}</tbody></table></section>${orderModal()}${callClientAction()}`;
 }
 
 function callClientAction() {
@@ -396,7 +418,7 @@ function orderModal() {
             const customerEditor = user.role === 'rider' ? '' : `<section id="orderEditor" class="edit-order stack hidden"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><label>Delivery fee <input id="modalDeliveryFee" type="number" min="0" step="0.01" value="${order.deliveryFee || 0}"></label>${itemEditor}<button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section>`;
             const headerActions = `${user.role === 'rider' ? '' : `<button class="secondary compact" data-action="toggleOrderEditor">Update</button><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button>`}<button class="secondary compact" data-action="closeModal">Close</button>`;
             const completionAction = order.status !== 'delivered' && Number(order.amountReceived || 0) >= Number(order.total || 0) ? `<button class="compact-action" data-action="${order.fulfillment === 'pickup' ? 'markPickedUp' : 'markDelivered'}">${order.fulfillment === 'pickup' ? 'Confirm pick-up' : 'Mark as delivered'}</button>` : '';
-            return `<div class="modal-backdrop"><section class="receipt modal ${user.role === 'rider' ? 'rider-receipt' : ''}"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions">${headerActions}</div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${phone ? `<a class="call-client" href="tel:${phone}">${order.customer.contact}</a>` : 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div>${customerEditor}<div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>SUBTOTAL</span><strong>${peso(order.total - Number(order.deliveryFee || 0))}</strong></div>${order.deliveryFee ? `<div><span>DELIVERY FEE</span><strong>${peso(order.deliveryFee)}</strong></div>` : ''}<div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div></div><div class="receipt-status">${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}</div>${paymentInput}${completionAction}</section></div>`;
+            return `<div class="modal-backdrop"><section class="receipt modal ${user.role === 'rider' ? 'rider-receipt' : ''}"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions">${headerActions}</div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${phone ? `<a class="call-client" href="tel:${phone}">${order.customer.contact}</a>` : 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div>${customerEditor}<div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>SUBTOTAL</span><strong>${peso(order.total - Number(order.deliveryFee || 0))}</strong></div>${order.deliveryFee ? `<div><span>DELIVERY FEE</span><strong>${peso(order.deliveryFee)}</strong></div>` : ''}<div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div></div><div class="receipt-status">${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}</div>${paymentInput}${completionAction}<div class="receipt-footer-actions"><button class="secondary compact btn-oneline" data-action="shareOrder" data-order-id="${order.id}">Share receipt</button></div></section></div>`;
             return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions"><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button><button class="secondary" data-action="closeModal">Close</button></div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${completionAction}</section></div>`;
                                 return `<div class="modal-backdrop"><section class="receipt modal"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions"><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button><button class="secondary" data-action="closeModal">Close</button></div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${completionAction}</section></div>`;
             return `<div class="modal-backdrop"><section class="receipt modal ${user.role === 'rider' ? 'rider-receipt' : ''}"><div class="receipt-top"><div><strong>DROOLY'S</strong><small>PRE-ORDER RECEIPT</small></div><div class="receipt-top-actions"><button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button><button class="secondary" data-action="closeModal">Close</button></div></div><div class="receipt-meta"><span>${order.receipt}</span><span>${order.scheduledDate} ${order.scheduledTime || ''}</span></div><div class="receipt-customer"><strong>${order.customer.name || 'No customer name'}</strong><span>${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span><span>${order.customer.contact || 'No contact number'}</span><span>${order.customer.address || 'No address'}</span></div><section class="edit-order stack"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div><div><span>BALANCE</span><strong>${peso(balance)}</strong></div>${balance === 0 ? `<div><span>CHANGE</span><strong>${peso(change)}</strong></div>` : ''}</div><div class="receipt-status">${order.paymentMethod.toUpperCase()} · ${order.status.toUpperCase()}</div>${paymentInput}${order.status !== 'delivered' ? '<button class="compact-action" data-action="markDelivered">Mark as delivered</button>' : ''}</section></div>`;
@@ -416,11 +438,11 @@ function legacyReports() {
     const selectedExpenses = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
     return `
         <div class="report-range-row"><label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
-        <section class="panel stack compact-form"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount per product"><div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
+        <section class="panel stack compact-form"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2>${expenseFormMarkup()}<div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${orders.map((o) => `<tr><td>${o.customer.name || 'No customer name'}<br><small>${o.paymentMethod}</small></td><td>${peso(salesAmount(o))}</td></tr>`).join('') || '<tr><td>No orders for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${selectedExpenses.map((expense) => `<tr><td>${expense.description}<br><small>${expense.quantity} x ${peso(expense.amount)}</small></td><td>${peso(calculateExpenseTotal(expense))}</td><td><div class="row-actions"><button class="secondary compact" data-edit-expense="${expense.id}">Edit</button><button class="danger compact" data-delete-expense="${expense.id}">Delete</button></div></td></tr>`).join('') || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
         ${reportSummaryVisible ? '' : '<button class="compact-action" data-action="toggleReportSummary">Generate summary</button>'}
-        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expense descriptions</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description} · ${expense.quantity || 1} x ${peso(expense.amount)}</span><strong>${peso(calculateExpenseTotal(expense))}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
+        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Products sold</h3>${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('') || '<p class="hint">No products sold.</p>'}<h3>Expenses by description</h3>${Object.entries(expenseTotalsByDescription(selectedExpenses)).map(([description, total]) => `<div class="cart-row"><span>${description}</span><strong>${peso(total)}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}<h3>Expense line items</h3>${selectedExpenses.map((expense) => `<div class="cart-row"><span>${expense.description} · ${expense.quantity || 1} x ${peso(expense.amount)}</span><strong>${peso(calculateExpenseTotal(expense))}</strong></div>`).join('') || '<p class="hint">No expenses recorded.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
 }
 
 function reports() {
@@ -447,13 +469,14 @@ function reports() {
     const expenseRows = Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `<tr><th colspan="3">${reportDateLabel(date)}</th></tr>${dayExpenses.map((expense) => `<tr><td>${expense.description}<br><small>${expense.quantity} x ${peso(expense.amount)}</small></td><td>${peso(calculateExpenseTotal(expense))}</td><td><div class="row-actions"><button class="secondary compact" data-edit-expense="${expense.id}">Edit</button><button class="danger compact" data-delete-expense="${expense.id}">Delete</button></div></td></tr>`).join('')}`).join('');
     const salesSummary = Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => `<div class="cart-row"><span>${reportDateLabel(date)}</span><strong>${peso(dayOrders.reduce((sum, order) => sum + salesAmount(order), 0))}</strong></div>`).join('');
     const expenseSummary = Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `<div class="cart-row"><span>${reportDateLabel(date)}</span><strong>${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}</strong></div>`).join('');
+    const expenseDescriptionSummary = Object.entries(expenseTotalsByDescription(selectedExpenses)).map(([description, total]) => `<div class="cart-row"><span>${description}</span><strong>${peso(total)}</strong></div>`).join('');
     return `
         <div class="report-range-row"><label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
-        <section class="panel stack compact-form"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2><input id="expenseDescription" placeholder="Expense description"><input id="expenseQuantity" type="number" min="1" step="1" placeholder="Product quantity"><input id="expenseAmount" type="number" min="0" step="0.01" placeholder="Amount per product"><div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
+        <section class="panel stack compact-form"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2>${expenseFormMarkup()}<div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${salesRows || '<tr><td>No sales for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${expenseRows || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
         ${reportSummaryVisible ? '' : '<button class="compact-action" data-action="toggleReportSummary">Generate summary</button>'}
-        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Sales by date</h3>${salesSummary || '<p class="hint">No sales recorded.</p>'}<h3>Expenses by date</h3>${expenseSummary || '<p class="hint">No expenses recorded.</p>'}<h3>Products sold</h3><div class="products-sold-grid">${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('')}</div>${Object.keys(productCounts).length ? '' : '<p class="hint">No products sold.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
+        ${reportSummaryVisible ? `<section class="panel stack"><h2>Range summary</h2><p>Whole sales: <strong>${peso(sales)}</strong><br>Whole expenses: <strong>${peso(expenseTotal)}</strong><br>Orders count: <strong>${orders.length}</strong><br>Profit: <strong>${peso(sales - expenseTotal)}</strong></p><h3>Sales by date</h3>${salesSummary || '<p class="hint">No sales recorded.</p>'}<h3>Expenses by date</h3>${expenseSummary || '<p class="hint">No expenses recorded.</p>'}<h3>Expenses by description</h3>${expenseDescriptionSummary || '<p class="hint">No expenses recorded.</p>'}<h3>Products sold</h3><div class="products-sold-grid">${Object.entries(productCounts).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('')}</div>${Object.keys(productCounts).length ? '' : '<p class="hint">No products sold.</p>'}</section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Create and share JPG</button></div>` : ''}`;
 }
 
 async function shareReportSummary() {
@@ -475,9 +498,31 @@ async function shareReportSummary() {
         (groups[expense.date] ||= []).push(expense);
         return groups;
     }, {});
+    const expensesByDescription = expenseTotalsByDescription(expenses);
+    const contentLines = [
+        { text: `Whole sales: ${peso(sales)}`, section: false },
+        { text: `Whole expenses: ${peso(expenseTotal)}`, section: false },
+        { text: `Orders count: ${orders.length}`, section: false },
+        { text: `Profit: ${peso(sales - expenseTotal)}`, section: false },
+        { text: '', section: false },
+        { text: 'Sales by date', section: true },
+        ...Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => ({ text: `${reportDateLabel(date)}: ${peso(dayOrders.reduce((sum, order) => sum + salesAmount(order), 0))}`, section: false })),
+        { text: '', section: false },
+        { text: 'Expenses by date', section: true },
+        ...Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => ({ text: `${reportDateLabel(date)}: ${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}`, section: false })),
+        { text: '', section: false },
+        { text: 'Expenses by description', section: true },
+        ...Object.entries(expensesByDescription).sort(([first], [second]) => first.localeCompare(second)).map(([description, total]) => ({ text: `${description}: ${peso(total)}`, section: false })),
+        { text: '', section: false },
+        { text: 'Products sold', section: true },
+        ...Object.entries(productCounts).map(([name, count]) => ({ text: `${name}: ${count}`, section: false })),
+    ];
+    const lineHeight = 34;
+    const sectionGap = 8;
+    const bodyHeight = contentLines.reduce((sum, line) => sum + (line.text ? lineHeight : lineHeight / 2) + (line.section ? sectionGap : 0), 0);
     const canvas = document.createElement('canvas');
     canvas.width = 1200;
-    canvas.height = Math.max(980, 360 + (orders.length + expenses.length + Object.keys(productCounts).length) * 42);
+    canvas.height = Math.max(720, 210 + bodyHeight + 60);
     const context = canvas.getContext('2d');
     context.fillStyle = '#fffdf8';
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -487,43 +532,40 @@ async function shareReportSummary() {
     const logo = new Image();
     logo.src = './droolys-logo.jpg';
     await new Promise((resolve) => { logo.onload = resolve; logo.onerror = resolve; });
-    if (logo.complete && logo.naturalWidth) context.drawImage(logo, 60, 48, 100, 100);
+    if (logo.complete && logo.naturalWidth) context.drawImage(logo, 60, 48, 92, 92);
     context.fillStyle = '#17211f';
-    context.font = 'bold 42px Lato, Arial, sans-serif';
-    context.fillText("DROOLY'S", 190, 88);
+    context.font = 'bold 34px Lato, Arial, sans-serif';
+    context.fillText("DROOLY'S", 170, 86);
     context.font = '22px Lato, Arial, sans-serif';
     context.fillStyle = '#6c665d';
-    context.fillText('SALES SUMMARY', 190, 122);
+    context.fillText('SALES SUMMARY', 170, 118);
     context.textAlign = 'right';
-    context.fillText(`${reportStart} to ${reportEnd}`, 1140, 122);
+    context.fillText(`${reportStart} to ${reportEnd}`, 1140, 118);
     context.textAlign = 'left';
     context.strokeStyle = '#9d958a';
     context.setLineDash([10, 8]);
     context.beginPath();
-    context.moveTo(60, 170);
-    context.lineTo(1140, 170);
+    context.moveTo(60, 162);
+    context.lineTo(1140, 162);
     context.stroke();
     context.setLineDash([]);
-    const lines = [
-        `Whole sales: ${peso(sales)}`,
-        `Whole expenses: ${peso(expenseTotal)}`,
-        `Orders count: ${orders.length}`,
-        `Profit: ${peso(sales - expenseTotal)}`,
-        '',
-        'Sales by date:',
-        ...Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => `${reportDateLabel(date)}: ${peso(dayOrders.reduce((sum, order) => sum + salesAmount(order), 0))}`),
-        '',
-        'Expenses by date:',
-        ...Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `${reportDateLabel(date)}: ${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}`),
-        '',
-        'Products sold:',
-        ...Object.entries(productCounts).map(([name, count]) => `${name}: ${count}`),
-        '',
-        'Expense details:',
-        ...expenses.map((expense) => `${expense.description}: ${expense.quantity} x ${peso(expense.amount)} = ${peso(calculateExpenseTotal(expense))}`),
-    ];
-    context.font = '25px Lato, Arial, sans-serif';
-    lines.forEach((line, index) => context.fillText(line, 60, 225 + index * 38));
+    let y = 198;
+    contentLines.forEach((line) => {
+        if (!line.text) {
+            y += lineHeight / 2;
+            return;
+        }
+        if (line.section) {
+            y += sectionGap;
+            context.fillStyle = '#17211f';
+            context.font = 'bold 26px Lato, Arial, sans-serif';
+        } else {
+            context.fillStyle = '#17211f';
+            context.font = '24px Lato, Arial, sans-serif';
+        }
+        context.fillText(line.text, 60, y);
+        y += lineHeight;
+    });
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     const file = new File([blob], `droolys-summary-${reportStart}-to-${reportEnd}.jpg`, { type: 'image/jpeg' });
     const shareText = `${reportStart} to ${reportEnd}. Sales: ${peso(sales)}. Expenses: ${peso(expenseTotal)}. Profit: ${peso(sales - expenseTotal)}.`;
@@ -543,25 +585,35 @@ async function shareReportSummary() {
 }
 
 function inventory() {
+    const categoryOptions = productCategoryOptions().map((category) => `<option value="${category}">`).join('');
     return `
-        <section class="panel stack compact-form">
+        <section class="panel stack compact-form inventory-panel">
             <div class="section-heading"><h2>Add / Update Product</h2><button class="secondary compact" data-action="toggleProductEditor">Show editor</button></div>
             <div id="productEditor" class="stack hidden">
             <input id="pId" type="hidden">
             <input id="pName" placeholder="Product name">
-            <input id="pCategory" placeholder="Category">
+            <input id="pCategory" list="categoryOptions" placeholder="Category">
+            <datalist id="categoryOptions">${categoryOptions}</datalist>
             <input id="pPrice" type="number" placeholder="Price">
             <button class="compact-action" data-action="saveProduct">Save Product</button>
             </div>
         </section>
-        <section class="panel" style="margin-top:12px">
+        <section class="panel inventory-panel" style="margin-top:12px">
             <h2>Products</h2>
             <table><tbody>${db.products.map((p) => `<tr><td>${p.name}<br><small>${p.category}</small><br><small class="${p.active ? 'status-active' : 'status-inactive'}">${p.active ? 'Active' : 'Inactive'}</small></td><td>${peso(p.price)}</td><td><details class="product-actions"><summary>Actions</summary><div class="row-actions"><button class="secondary compact" data-edit-product="${p.id}">Edit</button><button class="${p.active ? 'danger' : ''} secondary compact" data-toggle-product="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button><button class="danger compact" data-delete-product="${p.id}">Delete</button></div></details></td></tr>`).join('')}</tbody></table>
         </section>
         `;
 }
 
+function hideLoadingScreen() {
+    const loading = document.getElementById('loading-screen');
+    if (!loading || loading.classList.contains('hidden')) return;
+    loading.classList.add('hidden');
+    loading.setAttribute('aria-busy', 'false');
+}
+
 function render() {
+    hideLoadingScreen();
     if (!user) {
         renderLogin();
         return;
@@ -570,7 +622,6 @@ function render() {
     const views = { dashboard, pos, preorders, archived, reports, inventory };
     document.getElementById('app').innerHTML = appShell(views[tab]());
     document.getElementById('app').classList.toggle('reports-view', tab === 'reports');
-    if (modalOrderId) document.querySelector('.receipt-top-actions')?.insertAdjacentHTML('afterbegin', `<button class="secondary compact" data-action="shareOrder" data-order-id="${modalOrderId}">Share</button>`);
     if (modalOrderId && db.orders.find((order) => order.id === modalOrderId)?.status === 'delivered') {
         document.getElementById('orderEditor')?.remove();
         document.getElementById('orderItemEditor')?.remove();
@@ -601,11 +652,99 @@ function render() {
 async function shareOrder(orderId) {
     const order = db.orders.find((item) => item.id === Number(orderId));
     if (!order) return;
+    const subtotal = Number(order.total || 0) - Number(order.deliveryFee || 0);
+    const balance = Math.max(0, order.total - order.amountReceived);
+    const change = Math.max(0, order.amountReceived - order.total);
+    const totals = [
+        ['SUBTOTAL', peso(subtotal)],
+        ...(order.deliveryFee ? [['DELIVERY FEE', peso(order.deliveryFee)]] : []),
+        ['TOTAL', peso(order.total)],
+        ['RECEIVED', peso(order.amountReceived)],
+        ['BALANCE', peso(balance)],
+        ...(change ? [['CHANGE', peso(change)]] : []),
+        ['PAYMENT', paymentMethodsLabel(order)],
+        ['STATUS', order.status.toUpperCase()],
+    ];
+    const canvas = document.createElement('canvas');
+    canvas.width = 1000;
+    canvas.height = 420 + order.items.length * 44 + totals.length * 38;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#fffdf8';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = '#d8d0c4';
+    context.lineWidth = 4;
+    context.strokeRect(28, 28, canvas.width - 56, canvas.height - 56);
+    const logo = new Image();
+    logo.src = './droolys-logo.jpg';
+    await new Promise((resolve) => { logo.onload = resolve; logo.onerror = resolve; });
+    if (logo.complete && logo.naturalWidth) context.drawImage(logo, 70, 56, 96, 96);
+    context.fillStyle = '#17211f';
+    context.font = 'bold 34px Lato, Arial, sans-serif';
+    context.fillText("DROOLY'S", 190, 92);
+    context.font = '22px Lato, Arial, sans-serif';
+    context.fillStyle = '#6c665d';
+    context.fillText('PRE-ORDER RECEIPT', 190, 124);
+    context.textAlign = 'right';
+    context.fillText(order.receipt, 930, 92);
+    context.fillText(`${order.scheduledDate} ${formatTime(order.scheduledTime)}`, 930, 124);
+    context.textAlign = 'left';
+    context.strokeStyle = '#9d958a';
+    context.setLineDash([10, 8]);
+    context.beginPath();
+    context.moveTo(70, 188);
+    context.lineTo(930, 188);
+    context.stroke();
+    context.setLineDash([]);
+    context.fillStyle = '#17211f';
+    context.font = 'bold 26px Lato, Arial, sans-serif';
+    context.fillText(order.customer.name || 'No customer name', 70, 232);
+    context.font = '22px Lato, Arial, sans-serif';
+    context.fillStyle = '#6c665d';
+    context.fillText(order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY', 70, 264);
+    if (order.customer.contact) context.fillText(order.customer.contact, 70, 294);
+    let y = 340;
+    context.fillStyle = '#6c665d';
+    context.font = 'bold 20px Lato, Arial, sans-serif';
+    context.fillText('ITEM', 70, y);
+    context.fillText('QTY', 650, y);
+    context.fillText('AMOUNT', 770, y);
+    y += 36;
+    context.fillStyle = '#17211f';
+    context.font = '22px Lato, Arial, sans-serif';
+    order.items.forEach((item) => {
+        context.fillText(item.name, 70, y);
+        context.fillText(String(item.qty), 650, y);
+        context.textAlign = 'right';
+        context.fillText(peso(item.price * item.qty), 930, y);
+        context.textAlign = 'left';
+        y += 44;
+    });
+    y += 18;
+    context.strokeStyle = '#9d958a';
+    context.beginPath();
+    context.moveTo(560, y);
+    context.lineTo(930, y);
+    context.stroke();
+    y += 40;
+    totals.forEach(([label, value]) => {
+        context.font = label === 'TOTAL' ? 'bold 22px Lato, Arial, sans-serif' : '22px Lato, Arial, sans-serif';
+        context.fillStyle = '#17211f';
+        context.fillText(label, 560, y);
+        context.textAlign = 'right';
+        context.fillText(value, 930, y);
+        context.textAlign = 'left';
+        y += 38;
+    });
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    const file = new File([blob], `${order.receipt}-receipt.jpg`, { type: 'image/jpeg' });
     const text = `${order.receipt} - ${order.customer.name || 'Customer'}\nPayable: ${peso(order.total)}\nReceived: ${peso(order.amountReceived)}\n${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}`;
-    const nativeShare = window.Capacitor?.Plugins?.Share;
-    if (nativeShare) return nativeShare.share({ title: `Order ${order.receipt}`, text, dialogTitle: 'Share order' });
-    if (navigator.share) return navigator.share({ title: `Order ${order.receipt}`, text });
-    if (navigator.clipboard) await navigator.clipboard.writeText(text);
+    if (await shareWithAndroid(file, blob, text)) return;
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) return navigator.share({ title: `Order ${order.receipt}`, text, files: [file] });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = file.name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 function addToCart(id) {
@@ -841,6 +980,8 @@ document.addEventListener('click', (event) => {
         product.name = document.getElementById('pName').value.trim();
         product.category = document.getElementById('pCategory').value.trim() || 'General';
         product.price = Number(document.getElementById('pPrice').value || 0);
+        if (!Array.isArray(db.categories)) db.categories = [];
+        if (product.category && !db.categories.includes(product.category)) db.categories.push(product.category);
         if (product.name && !id) db.products.push(product);
         persist();
         render();
@@ -920,6 +1061,14 @@ document.addEventListener('change', (event) => {
     }
     if (event.target.id === 'scheduleDate' || event.target.id === 'preorderDate') {
         scheduleDate = event.target.value;
+        render();
+    }
+    if (event.target.id === 'archivedDate') {
+        archivedDate = event.target.value;
+        render();
+    }
+    if (event.target.id === 'posCategoryFilter') {
+        posCategoryFilter = event.target.value;
         render();
     }
     if (event.target.id === 'reportStart') {
