@@ -465,6 +465,14 @@ function render() {
     }
     const views = { dashboard, pos, preorders, archived, reports, inventory };
     document.getElementById('app').innerHTML = appShell(views[tab]());
+    const receiptTotals = document.querySelector('.receipt-totals');
+    if (receiptTotals) {
+        const rows = [...receiptTotals.children];
+        const findRow = (label) => rows.find((row) => row.firstElementChild?.textContent.trim() === label);
+        const changeRow = document.querySelector('.receipt-change');
+        if (changeRow) receiptTotals.append(changeRow);
+        [findRow('TOTAL'), findRow('BALANCE'), findRow('RECEIVED'), changeRow].filter(Boolean).forEach((row) => receiptTotals.append(row));
+    }
 }
 
 function addToCart(id) {

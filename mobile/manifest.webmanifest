@@ -3,7 +3,7 @@
     "short_name": "Drooly's",
     "start_url": "./index.html",
     "display": "standalone",
-    "background_color": "#f4f7f8",
+    "background_color": "#fff3f8",
     "theme_color": "#f32981",
     "icons": [
         { "src": "droolys-logo.jpg", "sizes": "any", "type": "image/jpeg", "purpose": "any maskable" }

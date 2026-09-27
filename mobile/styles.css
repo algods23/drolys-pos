@@ -1,11 +1,12 @@
 :root {
-    --bg: #f4f7f8;
+    --bg: #fff3f8;
     --panel: #ffffff;
     --ink: #17211f;
     --muted: #65726f;
     --line: #d9e3e0;
     --brand: #f32981;
     --brand-dark: #c91462;
+    --accent: #fbba2b;
     --danger: #dc2626;
     --warn: #f59e0b;
 }
@@ -16,7 +17,7 @@ button, input, select { font: inherit; }
 button { border: 0; border-radius: 10px; background: var(--brand); color: #fff; padding: 12px 14px; font-weight: 700; }
 button.secondary { background: #e7efed; color: var(--ink); }
 button.danger { background: var(--danger); }
-button[data-toggle-product] { background: var(--warn); color: var(--ink); }
+button[data-toggle-product] { background: var(--accent); color: var(--ink); }
 button[data-delete-product] { background: #fff; color: var(--danger); border: 1px solid #fca5a5; }
 input, select { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #fff; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
@@ -51,7 +52,7 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .products { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .product { text-align: left; min-height: 116px; color: var(--ink); background: #fff; display: grid; align-content: space-between; }
 .product strong { font-size: 16px; }
-.product span { color: var(--brand); font-weight: 700; }
+.product span { color: #b87900; font-weight: 700; }
 .product small { color: var(--muted); }
 .cart { position: sticky; bottom: 74px; margin-top: 12px; box-shadow: 0 -8px 20px rgba(15, 35, 31, .08); }
 .cart-action { position: fixed; z-index: 6; top: 50%; right: 0; display: flex; justify-content: flex-end; transform: translateY(-50%); }
@@ -106,13 +107,14 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .receipt-line span:last-child { width: 92px; text-align: right; }
 .receipt-label { color: #6c665d; font-size: 10px; }
 .receipt-totals { display: grid; gap: 6px; padding: 14px 0; border-bottom: 1px dashed #9d958a; font-size: 13px; }
+.receipt-change { display: flex; justify-content: space-between; gap: 12px; }
 .receipt-status { padding: 14px 0; text-align: center; letter-spacing: 1px; }
 .report-actions { display: flex; gap: 8px; margin: 12px 0; }
 .report-actions button { flex: 1; }
 .bar-chart { min-height: 190px; display: flex; align-items: end; gap: 8px; overflow-x: auto; padding: 16px 4px 0; border-bottom: 1px solid var(--line); }
 .bar-column { min-width: 52px; display: grid; justify-items: center; align-content: end; gap: 4px; color: var(--muted); font-size: 10px; }
 .bar-column span { font-size: 9px; white-space: nowrap; transform: rotate(-45deg); transform-origin: center; margin-bottom: 8px; }
-.bar { width: 28px; min-height: 8px; border-radius: 6px 6px 0 0; background: var(--brand); }
+.bar { width: 28px; min-height: 8px; border-radius: 6px 6px 0 0; background: var(--accent); }
 
 @media (min-width: 720px) {
     .screen { max-width: 760px; margin: 0 auto; }
