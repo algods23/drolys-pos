@@ -101,6 +101,7 @@ let checkoutFulfillment = 'delivery';
 let confirmationOrderId = null;
 let syncStatus = '';
 let syncServer = null;
+let syncAdmin = null;
 let syncListenerReady = false;
 let posCategoryFilter = 'All';
 let archivedDateFilter = '';
@@ -301,8 +302,8 @@ async function setupSyncListener() {
 
 function syncPanel() {
     if (!syncPlugin()) return '';
-    if (user.role === 'admin') return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Share all orders scheduled for today with the Rider on the same Wi-Fi.</p><button class="compact-action" data-action="shareTodayOrders">Share today's orders</button>${syncServer ? `<p class="notice">Admin address: <strong>${syncServer.host}:${syncServer.port}</strong></p>` : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
-    return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Use the Admin address while both devices are on the same Wi-Fi.</p><div class="form-grid"><label>Admin IP address <input id="syncHost" placeholder="192.168.1.10"></label><label>Port <input id="syncPort" type="number" value="8765"></label></div><div class="row-actions"><button class="compact-action" data-action="receiveTodayOrders">Receive today's orders</button><button class="secondary compact-action" data-action="sendRiderUpdates">Send updates to Admin</button></div>${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
+    if (user.role === 'admin') return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Share all orders scheduled for today with the Rider on the same Wi-Fi.</p><button class="compact-action" data-action="shareTodayOrders">Share today's orders</button>${syncServer ? '<p class="notice">Rider can now find this Admin phone automatically.</p>' : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
+    return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Admin is found automatically while both devices use the same Wi-Fi.</p><div class="row-actions"><button class="compact-action" data-action="receiveTodayOrders">Receive today's orders</button><button class="secondary compact-action" data-action="sendRiderUpdates">Send updates to Admin</button></div>${syncAdmin ? '<p class="notice">Admin found on this Wi-Fi.</p>' : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
 }
 
 async function shareTodayOrders() {
@@ -313,15 +314,24 @@ async function shareTodayOrders() {
     render();
 }
 
-function adminConnection() {
-    const host = document.getElementById('syncHost')?.value.trim();
-    const port = Number(document.getElementById('syncPort')?.value || 8765);
-    if (!host) throw new Error('Enter the Admin IP address.');
-    return { host, port };
+async function adminConnection() {
+    if (syncAdmin) return syncAdmin;
+    const admin = await syncPlugin().discoverAdmin();
+    syncAdmin = { host: admin.host, port: Number(admin.port || 8765) };
+    return syncAdmin;
+}
+
+async function connectToAdmin(payload) {
+    try {
+        return await syncPlugin().connect({ ...(await adminConnection()), payload });
+    } catch (error) {
+        syncAdmin = null;
+        throw error;
+    }
 }
 
 async function receiveTodayOrders() {
-    const result = await syncPlugin().connect({ ...adminConnection(), payload: syncPayload('request-orders') });
+    const result = await connectToAdmin(syncPayload('request-orders'));
     const { added, updated } = importAdminOrders(result.payload);
     syncStatus = `Received today's orders: ${added} added, ${updated} refreshed.`;
     render();
@@ -329,7 +339,7 @@ async function receiveTodayOrders() {
 
 async function sendRiderUpdates() {
     const orders = todaysSyncOrders().map(riderUpdate);
-    await syncPlugin().connect({ ...adminConnection(), payload: syncPayload('rider-updates', orders) });
+    await connectToAdmin(syncPayload('rider-updates', orders));
     syncStatus = `${orders.length} Rider update${orders.length === 1 ? '' : 's'} sent to Admin.`;
     render();
 }
