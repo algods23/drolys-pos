@@ -80,6 +80,7 @@ db.orders = db.orders.map((order) => ({
     deliveryFee: Number(order.deliveryFee || 0),
     paymentMethod: order.paymentMethod || 'cash',
     amountReceived: Number(order.amountReceived || 0),
+    tenderedAmount: Number(order.tenderedAmount ?? (Number(order.amountReceived || 0) + Math.max(0, Number(order.change || 0)))),
     payments: Array.isArray(order.payments) ? order.payments.map((payment) => ({ method: payment.method || 'cash', amount: Number(payment.amount || 0) })) : (Number(order.amountReceived || 0) > 0 ? [{ method: order.paymentMethod || 'cash', amount: Number(order.amountReceived) }] : []),
     status: order.status || (order.amountReceived >= order.total ? 'paid' : 'partial'),
 }));
@@ -138,8 +139,13 @@ function isPaidOrder(order) {
     return Number(order.amountReceived || 0) >= Number(order.total || 0);
 }
 
+function orderTendered(order) {
+    if (order.tenderedAmount !== undefined && order.tenderedAmount !== null) return Math.max(0, Number(order.tenderedAmount || 0));
+    return Math.max(0, Number(order.amountReceived || 0) + Math.max(0, Number(order.change || 0)));
+}
+
 function orderChange(order) {
-    return Math.max(0, Number(order.change || 0), Number(order.amountReceived || 0) - Number(order.total || 0));
+    return Math.max(0, Number(order.change || 0), orderTendered(order) - Number(order.amountReceived || 0));
 }
 
 function paymentMethodsLabel(order) {
@@ -232,6 +238,7 @@ function riderUpdate(order) {
         receipt: syncOrderKey(order),
         status: order.status,
         amountReceived: Number(order.amountReceived || 0),
+        tenderedAmount: orderTendered(order),
         change: Number(order.change || 0),
         paymentMethod: order.paymentMethod || 'cash',
         payments: Array.isArray(order.payments) ? order.payments : [],
@@ -280,6 +287,7 @@ function applyRiderUpdates(payload) {
         }
         local.status = remote.status || local.status;
         local.amountReceived = Number(remote.amountReceived || 0);
+        local.tenderedAmount = Number(remote.tenderedAmount ?? (remote.amountReceived || 0));
         local.change = Number(remote.change || 0);
         local.paymentMethod = remote.paymentMethod || local.paymentMethod;
         local.payments = Array.isArray(remote.payments) ? remote.payments : local.payments || [];
@@ -823,6 +831,11 @@ function render() {
     if (receiptTotals) {
         const rows = [...receiptTotals.children];
         const findRow = (label) => rows.find((row) => row.firstElementChild?.textContent.trim() === label);
+        const receivedRow = findRow('RECEIVED');
+        if (receivedRow && (modalOrderId || confirmationOrderId)) {
+            const order = db.orders.find((item) => item.id === (modalOrderId || confirmationOrderId));
+            if (order) receivedRow.lastElementChild.textContent = peso(orderTendered(order));
+        }
         const changeRow = document.querySelector('.receipt-change');
         if (changeRow) receiptTotals.append(changeRow);
         [findRow('TOTAL'), findRow('BALANCE'), findRow('RECEIVED'), changeRow].filter(Boolean).forEach((row) => receiptTotals.append(row));
@@ -841,7 +854,7 @@ async function shareOrder(orderId) {
         ['SUBTOTAL', peso(subtotal)],
         ...(order.deliveryFee ? [['DELIVERY FEE', peso(order.deliveryFee)]] : []),
         ['TOTAL', peso(order.total)],
-        ['RECEIVED', peso(order.amountReceived)],
+        ['RECEIVED', peso(orderTendered(order))],
         ['BALANCE', peso(balance)],
         ...(change ? [['CHANGE', peso(change)]] : []),
         ...(paymentLabel ? [['PAYMENT', paymentLabel]] : []),
@@ -920,7 +933,7 @@ async function shareOrder(orderId) {
     });
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     const file = new File([blob], `${order.receipt}-receipt.jpg`, { type: 'image/jpeg' });
-    const text = `${order.receipt} - ${order.customer.name || 'Customer'}\nPayable: ${peso(order.total)}\nReceived: ${peso(order.amountReceived)}\n${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}`;
+    const text = `${order.receipt} - ${order.customer.name || 'Customer'}\nPayable: ${peso(order.total)}\nReceived: ${peso(orderTendered(order))}\n${paymentMethodsLabel(order)} · ${order.status.toUpperCase()}`;
     if (await shareWithAndroid(file, blob, text)) return;
     if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) return navigator.share({ title: `Order ${order.receipt}`, text, files: [file] });
     const link = document.createElement('a');
@@ -974,6 +987,7 @@ function checkout() {
         },
         paymentMethod,
         amountReceived,
+        tenderedAmount,
         payments: amountReceived > 0 ? [{ method: paymentMethod, amount: amountReceived }] : [],
         change: Math.max(0, tenderedAmount - total),
         status: amountReceived >= total ? 'paid' : 'partial',
@@ -1132,8 +1146,9 @@ document.addEventListener('click', (event) => {
         order.payments = Array.isArray(order.payments) ? order.payments : (order.amountReceived > 0 ? [{ method: order.paymentMethod || 'cash', amount: Number(order.amountReceived) }] : []);
         order.payments.push({ method: paymentMethod, amount: creditedPayment });
         order.amountReceived = currentReceived + creditedPayment;
+        order.tenderedAmount = orderTendered(order) + additionalPayment;
         order.paymentMethod = paymentMethod;
-        order.change = Math.max(orderChange(order), change);
+        order.change = Math.max(0, order.tenderedAmount - order.amountReceived);
         order.status = order.amountReceived >= order.total ? 'paid' : 'partial';
         persist();
         render();
