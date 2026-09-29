@@ -138,6 +138,10 @@ function isPaidOrder(order) {
     return Number(order.amountReceived || 0) >= Number(order.total || 0);
 }
 
+function orderChange(order) {
+    return Math.max(0, Number(order.change || 0), Number(order.amountReceived || 0) - Number(order.total || 0));
+}
+
 function paymentMethodsLabel(order) {
     if (Number(order.amountReceived || 0) <= 0) return '';
     const totals = paymentBreakdown(order);
@@ -344,6 +348,14 @@ async function sendRiderUpdates() {
     render();
 }
 
+function sendRiderUpdatesAfterPayment() {
+    if (user?.role !== 'rider' || !syncPlugin()) return;
+    sendRiderUpdates().catch(() => {
+        syncStatus = 'Payment saved. Use Send updates to Admin when both phones are on the same Wi-Fi.';
+        render();
+    });
+}
+
 function appShell(content) {
     const tabs = [
         ['dashboard', 'Home'],
@@ -521,7 +533,7 @@ function orderModal() {
     if (!order) return '';
     const phone = (order.customer.contact || '').replace(/[^+\d]/g, '');
     const balance = Math.max(0, order.total - order.amountReceived);
-    const change = Math.max(0, order.amountReceived - order.total);
+    const change = orderChange(order);
         const paymentInput = balance > 0 ? `<fieldset class="choice-group"><legend>Payment method</legend><label class="choice"><input type="radio" name="modalPaymentMethod" value="cash" checked> Cash</label><label class="choice"><input type="radio" name="modalPaymentMethod" value="gcash"> GCash</label></fieldset><label>Payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label>` : `<div class="receipt-change"><span>CHANGE</span><strong>${peso(change)}</strong></div>`;
             const itemEditor = orderEditor(order);
             const customerEditor = user.role === 'rider' ? '' : `<section id="orderEditor" class="edit-order stack hidden"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><label>Delivery fee <input id="modalDeliveryFee" type="number" min="0" step="0.01" value="${order.deliveryFee || 0}"></label>${itemEditor}<button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section>`;
@@ -823,7 +835,7 @@ async function shareOrder(orderId) {
     if (!order) return;
     const subtotal = Number(order.total || 0) - Number(order.deliveryFee || 0);
     const balance = Math.max(0, order.total - order.amountReceived);
-    const change = Math.max(0, order.amountReceived - order.total);
+    const change = orderChange(order);
     const paymentLabel = paymentMethodsLabel(order);
     const totals = [
         ['SUBTOTAL', peso(subtotal)],
@@ -941,7 +953,8 @@ function checkout() {
     if (deliveryFee < 0) return;
     const total = subtotal + deliveryFee;
     if (!confirm(`Create this ${fulfillment === 'delivery' ? 'delivery' : 'pick-up'} order for ${peso(total)}?`)) return;
-    const amountReceived = Number(document.getElementById('amountReceived')?.value || 0);
+    const tenderedAmount = Number(document.getElementById('amountReceived')?.value || 0);
+    const amountReceived = Math.min(Math.max(0, tenderedAmount), total);
     const paymentMethod = document.querySelector('input[name="paymentMethod"]:checked')?.value || 'cash';
     db.orders.push({
         id: Date.now(),
@@ -962,7 +975,7 @@ function checkout() {
         paymentMethod,
         amountReceived,
         payments: amountReceived > 0 ? [{ method: paymentMethod, amount: amountReceived }] : [],
-        change: amountReceived - total,
+        change: Math.max(0, tenderedAmount - total),
         status: amountReceived >= total ? 'paid' : 'partial',
         createdAt: new Date().toISOString(),
     });
@@ -1110,16 +1123,21 @@ document.addEventListener('click', (event) => {
         const additionalPayment = Number(document.getElementById('modalAmountReceived').value || 0);
         const paymentMethod = document.querySelector('input[name="modalPaymentMethod"]:checked')?.value || 'cash';
         if (!order || additionalPayment <= 0) return;
-        const cumulativePayment = Number(order.amountReceived || 0) + additionalPayment;
-        if (!confirm(`Save additional payment of ${peso(additionalPayment)}?`)) return;
+        const currentReceived = Math.min(Number(order.total || 0), Math.max(0, Number(order.amountReceived || 0)));
+        const remainingBalance = Math.max(0, Number(order.total || 0) - currentReceived);
+        const creditedPayment = Math.min(additionalPayment, remainingBalance);
+        const change = Math.max(0, additionalPayment - creditedPayment);
+        if (!creditedPayment) return;
+        if (!confirm(`Save payment of ${peso(creditedPayment)}${change ? ` and return ${peso(change)} change` : ''}?`)) return;
         order.payments = Array.isArray(order.payments) ? order.payments : (order.amountReceived > 0 ? [{ method: order.paymentMethod || 'cash', amount: Number(order.amountReceived) }] : []);
-        order.payments.push({ method: paymentMethod, amount: additionalPayment });
-        order.amountReceived = cumulativePayment;
+        order.payments.push({ method: paymentMethod, amount: creditedPayment });
+        order.amountReceived = currentReceived + creditedPayment;
         order.paymentMethod = paymentMethod;
-        order.change = Math.max(0, cumulativePayment - order.total);
-        order.status = cumulativePayment >= order.total ? 'paid' : 'partial';
+        order.change = Math.max(orderChange(order), change);
+        order.status = order.amountReceived >= order.total ? 'paid' : 'partial';
         persist();
         render();
+        sendRiderUpdatesAfterPayment();
     }
     if (target.dataset.action === 'updateOrderItems') {
         if (user.role === 'rider') return;
