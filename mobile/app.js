@@ -197,61 +197,140 @@ function syncPlugin() {
     return window.Capacitor?.Plugins?.WifiSync;
 }
 
-function syncPayload() {
-    return JSON.stringify({ orders: db.orders });
+function syncOrderKey(order) {
+    return String(order?.receipt || '').trim();
 }
 
-function mergeSyncedOrders(payload) {
-    const incoming = JSON.parse(payload || '{}').orders || [];
-    const localOrders = new Map(db.orders.map((order) => [order.receipt, order]));
+function todaysSyncOrders() {
+    return db.orders.filter((order) => order.scheduledDate === today() && syncOrderKey(order));
+}
+
+function syncPayload(type, orders = []) {
+    return JSON.stringify({ version: 2, type, date: today(), orders });
+}
+
+function parseSyncPayload(payload) {
+    try {
+        const parsed = JSON.parse(payload || '{}');
+        return {
+            type: parsed.type || '',
+            date: parsed.date || '',
+            orders: Array.isArray(parsed.orders) ? parsed.orders : [],
+        };
+    } catch {
+        return { type: '', date: '', orders: [] };
+    }
+}
+
+function riderUpdate(order) {
+    return {
+        receipt: syncOrderKey(order),
+        status: order.status,
+        amountReceived: Number(order.amountReceived || 0),
+        change: Number(order.change || 0),
+        paymentMethod: order.paymentMethod || 'cash',
+        payments: Array.isArray(order.payments) ? order.payments : [],
+        deliveredAt: order.deliveredAt || '',
+    };
+}
+
+function importAdminOrders(payload) {
+    const { date, orders } = parseSyncPayload(payload);
+    if (date && date !== today()) return { added: 0, updated: 0 };
+    const localOrders = new Map(db.orders.map((order) => [syncOrderKey(order), order]).filter(([key]) => key));
+    let added = 0;
     let updated = 0;
-    incoming.forEach((remote) => {
-        const local = localOrders.get(remote.receipt);
-        if (!local) return;
-        local.status = remote.status;
-        local.amountReceived = Number(remote.amountReceived || 0);
-        local.change = Number(remote.change || 0);
-        local.paymentMethod = remote.paymentMethod || local.paymentMethod;
-        local.payments = remote.payments || local.payments || [];
+
+    orders.filter((order) => order?.scheduledDate === today() && syncOrderKey(order)).forEach((remote) => {
+        const key = syncOrderKey(remote);
+        const local = localOrders.get(key);
+        if (!local) {
+            db.orders.push(structuredClone(remote));
+            localOrders.set(key, remote);
+            added += 1;
+            return;
+        }
+
+        // Admin owns the order details; Rider owns delivery and payment progress.
+        const riderProgress = riderUpdate(local);
+        Object.assign(local, structuredClone(remote), riderProgress);
         updated += 1;
     });
     persist();
-    return updated;
+    return { added, updated };
+}
+
+function applyRiderUpdates(payload) {
+    const { date, type, orders } = parseSyncPayload(payload);
+    if (type !== 'rider-updates' || (date && date !== today())) return { updated: 0, missing: 0 };
+    const localOrders = new Map(db.orders.map((order) => [syncOrderKey(order), order]).filter(([key]) => key));
+    let updated = 0;
+    let missing = 0;
+
+    orders.forEach((remote) => {
+        const local = localOrders.get(syncOrderKey(remote));
+        if (!local) {
+            missing += 1;
+            return;
+        }
+        local.status = remote.status || local.status;
+        local.amountReceived = Number(remote.amountReceived || 0);
+        local.change = Number(remote.change || 0);
+        local.paymentMethod = remote.paymentMethod || local.paymentMethod;
+        local.payments = Array.isArray(remote.payments) ? remote.payments : local.payments || [];
+        local.deliveredAt = remote.deliveredAt || local.deliveredAt || '';
+        updated += 1;
+    });
+    persist();
+    return { updated, missing };
 }
 
 async function setupSyncListener() {
     if (syncListenerReady || !syncPlugin()?.addListener) return;
     syncListenerReady = true;
     await syncPlugin().addListener('syncReceived', async ({ payload }) => {
-        if (user.role !== 'admin') return;
-        const updated = mergeSyncedOrders(payload);
-        syncStatus = `Rider update received: ${updated} matching order${updated === 1 ? '' : 's'} updated.`;
-        if (syncServer) await syncPlugin().setServerPayload({ payload: syncPayload() });
+        if (user?.role !== 'admin') return;
+        const result = applyRiderUpdates(payload);
+        if (result.updated || result.missing) {
+            syncStatus = `Rider updates received: ${result.updated} order${result.updated === 1 ? '' : 's'} updated${result.missing ? `, ${result.missing} order${result.missing === 1 ? '' : 's'} not found` : ''}.`;
+            if (syncServer) await syncPlugin().setServerPayload({ payload: syncPayload('admin-orders', todaysSyncOrders()) });
+        }
         render();
     });
 }
 
 function syncPanel() {
     if (!syncPlugin()) return '';
-    if (user.role === 'admin') return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Start sync on Admin, then connect Rider on the same Wi-Fi.</p><button class="compact-action" data-action="startSync">Start sync</button>${syncServer ? `<p class="notice">Rider connection: <strong>${syncServer.host}:${syncServer.port}</strong></p>` : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
-    return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Enter the Admin address while both devices use the same Wi-Fi.</p><div class="form-grid"><label>Admin IP address <input id="syncHost" placeholder="192.168.1.10"></label><label>Port <input id="syncPort" type="number" value="8765"></label></div><button class="compact-action" data-action="connectSync">Sync with Admin</button>${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
+    if (user.role === 'admin') return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Share all orders scheduled for today with the Rider on the same Wi-Fi.</p><button class="compact-action" data-action="shareTodayOrders">Share today's orders</button>${syncServer ? `<p class="notice">Admin address: <strong>${syncServer.host}:${syncServer.port}</strong></p>` : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
+    return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Use the Admin address while both devices are on the same Wi-Fi.</p><div class="form-grid"><label>Admin IP address <input id="syncHost" placeholder="192.168.1.10"></label><label>Port <input id="syncPort" type="number" value="8765"></label></div><div class="row-actions"><button class="compact-action" data-action="receiveTodayOrders">Receive today's orders</button><button class="secondary compact-action" data-action="sendRiderUpdates">Send updates to Admin</button></div>${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
 }
 
-async function startSync() {
-    const result = await syncPlugin().startServer({ port: 8765 });
-    syncServer = result;
-    await syncPlugin().setServerPayload({ payload: syncPayload() });
-    syncStatus = 'Waiting for Rider to connect.';
+async function shareTodayOrders() {
+    if (!syncServer) syncServer = await syncPlugin().startServer({ port: 8765 });
+    const orders = todaysSyncOrders();
+    await syncPlugin().setServerPayload({ payload: syncPayload('admin-orders', orders) });
+    syncStatus = `${orders.length} order${orders.length === 1 ? '' : 's'} scheduled for today are ready for Rider.`;
     render();
 }
 
-async function connectSync() {
+function adminConnection() {
     const host = document.getElementById('syncHost')?.value.trim();
     const port = Number(document.getElementById('syncPort')?.value || 8765);
-    if (!host) return;
-    const result = await syncPlugin().connect({ host, port, payload: syncPayload() });
-    const updated = mergeSyncedOrders(result.payload);
-    syncStatus = `Sync complete: ${updated} matching order${updated === 1 ? '' : 's'} updated.`;
+    if (!host) throw new Error('Enter the Admin IP address.');
+    return { host, port };
+}
+
+async function receiveTodayOrders() {
+    const result = await syncPlugin().connect({ ...adminConnection(), payload: syncPayload('request-orders') });
+    const { added, updated } = importAdminOrders(result.payload);
+    syncStatus = `Received today's orders: ${added} added, ${updated} refreshed.`;
+    render();
+}
+
+async function sendRiderUpdates() {
+    const orders = todaysSyncOrders().map(riderUpdate);
+    await syncPlugin().connect({ ...adminConnection(), payload: syncPayload('rider-updates', orders) });
+    syncStatus = `${orders.length} Rider update${orders.length === 1 ? '' : 's'} sent to Admin.`;
     render();
 }
 
@@ -901,8 +980,9 @@ document.addEventListener('click', (event) => {
         render();
     }
     if (target.dataset.action === 'shareOrder') shareOrder(target.dataset.orderId).catch(() => alert('Unable to share this order.'));
-    if (target.dataset.action === 'startSync') startSync().catch(() => { syncStatus = 'Unable to start Wi-Fi sync.'; render(); });
-    if (target.dataset.action === 'connectSync') connectSync().catch(() => { syncStatus = 'Unable to connect to Admin. Check the IP and Wi-Fi.'; render(); });
+    if (target.dataset.action === 'shareTodayOrders') shareTodayOrders().catch(() => { syncStatus = 'Unable to share today\'s orders. Check the Wi-Fi connection.'; render(); });
+    if (target.dataset.action === 'receiveTodayOrders') receiveTodayOrders().catch((error) => { syncStatus = error.message || 'Unable to receive orders. Check the Admin IP and Wi-Fi.'; render(); });
+    if (target.dataset.action === 'sendRiderUpdates') sendRiderUpdates().catch((error) => { syncStatus = error.message || 'Unable to send Rider updates. Check the Admin IP and Wi-Fi.'; render(); });
     if (target.dataset.action === 'showSales') {
         reportView = 'sales';
         render();
@@ -1046,6 +1126,7 @@ document.addEventListener('click', (event) => {
         if (!order || Number(order.amountReceived || 0) < Number(order.total || 0)) return;
         if (!confirm(target.dataset.action === 'markPickedUp' ? 'Confirm this pickup order was collected?' : 'Mark this order as delivered?')) return;
         order.status = 'delivered';
+        order.deliveredAt = new Date().toISOString();
         persist();
         modalOrderId = null;
         tab = user.role === 'rider' ? 'preorders' : 'archived';
