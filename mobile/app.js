@@ -104,6 +104,7 @@ let syncStatus = '';
 let syncServer = null;
 let syncAdmin = null;
 let syncListenerReady = false;
+let localPortal = null;
 let posCategoryFilter = 'All';
 let archivedDateFilter = '';
 const LOADING_MIN_MS = 5000;
@@ -202,10 +203,39 @@ async function shareWithAndroid(file, blob, text) {
 
 function persist() {
     store.write(db);
+    refreshLocalPortal();
 }
 
 function syncPlugin() {
     return window.Capacitor?.Plugins?.WifiSync;
+}
+
+function createLocalAccessCode() {
+    const values = new Uint32Array(2);
+    crypto.getRandomValues(values);
+    return Array.from(values, (value) => value.toString(36)).join('').slice(0, 10);
+}
+
+function localPortalPayload() {
+    return JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        orders: db.orders,
+        products: db.products,
+        expenses: db.expenses,
+    });
+}
+
+function refreshLocalPortal() {
+    if (!localPortal || user?.role !== 'admin' || !syncPlugin()) return;
+    syncPlugin().setPortalPayload({
+        payload: localPortalPayload(),
+        accessCode: localPortal.accessCode,
+    }).catch(() => {});
+}
+
+function localPortalUrl() {
+    if (!localPortal) return '';
+    return `http://${localPortal.host}:${localPortal.port}/?key=${localPortal.accessCode}`;
 }
 
 function syncOrderKey(order) {
@@ -314,7 +344,10 @@ async function setupSyncListener() {
 
 function syncPanel() {
     if (!syncPlugin()) return '';
-    if (user.role === 'admin') return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Share all orders scheduled for today with the Rider on the same Wi-Fi.</p><button class="compact-action" data-action="shareTodayOrders">Share today's orders</button>${syncServer ? '<p class="notice">Rider can now find this Admin phone automatically.</p>' : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
+    if (user.role === 'admin') {
+        const portalDetails = localPortal ? `<div class="local-access"><strong>Local admin address</strong><code>${localPortalUrl()}</code><p class="hint">Open this address on a device using the same Wi-Fi. Keep this phone and the app open.</p><button class="secondary compact-action" data-action="stopLocalDashboard">Stop local access</button></div>` : '';
+        return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Share all orders scheduled for today with the Rider on the same Wi-Fi.</p><button class="compact-action" data-action="shareTodayOrders">Share today's orders</button>${syncServer ? '<p class="notice">Rider can now find this Admin phone automatically.</p>' : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section><section class="panel stack"><h2>Local admin access</h2><p class="hint">Open your current orders, products, expenses, and sales data on a laptop, PC, or phone using this Wi-Fi only.</p><button class="compact-action" data-action="shareLocalDashboard">${localPortal ? 'Refresh local address' : 'Start local access'}</button>${portalDetails}</section>`;
+    }
     return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Admin is found automatically while both devices use the same Wi-Fi.</p><div class="row-actions"><button class="compact-action" data-action="receiveTodayOrders">Receive today's orders</button><button class="secondary compact-action" data-action="sendRiderUpdates">Send updates to Admin</button></div>${syncAdmin ? '<p class="notice">Admin found on this Wi-Fi.</p>' : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
 }
 
@@ -323,6 +356,25 @@ async function shareTodayOrders() {
     const orders = todaysSyncOrders();
     await syncPlugin().setServerPayload({ payload: syncPayload('admin-orders', orders) });
     syncStatus = `${orders.length} order${orders.length === 1 ? '' : 's'} scheduled for today are ready for Rider.`;
+    render();
+}
+
+async function shareLocalDashboard() {
+    if (!syncServer) syncServer = await syncPlugin().startServer({ port: 8765 });
+    localPortal = {
+        host: syncServer.host,
+        port: Number(syncServer.port || 8765),
+        accessCode: localPortal?.accessCode || createLocalAccessCode(),
+    };
+    await syncPlugin().setPortalPayload({ payload: localPortalPayload(), accessCode: localPortal.accessCode });
+    syncStatus = `Local admin access is ready at ${localPortal.host}:${localPortal.port}.`;
+    render();
+}
+
+async function stopLocalDashboard() {
+    localPortal = null;
+    await syncPlugin().setPortalPayload({ payload: '{}', accessCode: '' });
+    syncStatus = 'Local admin access stopped.';
     render();
 }
 
@@ -874,7 +926,6 @@ async function shareOrder(orderId) {
     context.fillText("DROOLY'S", 190, 92);
     context.font = '22px Lato, Arial, sans-serif';
     context.fillStyle = '#6c665d';
-    context.fillText('PRE-ORDER RECEIPT', 190, 124);
     context.textAlign = 'right';
     context.fillText(order.receipt, 930, 92);
     context.fillText(`${order.scheduledDate} ${formatTime(order.scheduledTime)}`, 930, 124);
@@ -1018,6 +1069,8 @@ document.addEventListener('click', (event) => {
     }
     if (target.dataset.action === 'shareOrder') shareOrder(target.dataset.orderId).catch(() => alert('Unable to share this order.'));
     if (target.dataset.action === 'shareTodayOrders') shareTodayOrders().catch(() => { syncStatus = 'Unable to share today\'s orders. Check the Wi-Fi connection.'; render(); });
+    if (target.dataset.action === 'shareLocalDashboard') shareLocalDashboard().catch(() => { syncStatus = 'Unable to start local access. Check the Wi-Fi connection.'; render(); });
+    if (target.dataset.action === 'stopLocalDashboard') stopLocalDashboard().catch(() => { syncStatus = 'Unable to stop local access.'; render(); });
     if (target.dataset.action === 'receiveTodayOrders') receiveTodayOrders().catch((error) => { syncStatus = error.message || 'Unable to receive orders. Check the Admin IP and Wi-Fi.'; render(); });
     if (target.dataset.action === 'sendRiderUpdates') sendRiderUpdates().catch((error) => { syncStatus = error.message || 'Unable to send Rider updates. Check the Admin IP and Wi-Fi.'; render(); });
     if (target.dataset.action === 'showSales') {

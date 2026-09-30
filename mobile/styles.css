@@ -142,6 +142,7 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .receipt-top, .receipt-meta, .receipt-line, .receipt-totals div { display: flex; justify-content: space-between; gap: 12px; }
 .receipt-top { align-items: flex-start; border-bottom: 1px dashed #9d958a; padding-bottom: 14px; }
 .receipt-top strong, .receipt-top small { display: block; }
+.receipt-top small { display: none; }
 .receipt-top strong { font-size: 24px; letter-spacing: 1px; }
 .receipt-top small, .receipt-meta, .receipt-customer, .receipt-status { color: #6c665d; font-size: 11px; }
 .receipt-top button { font-family: Arial, Helvetica, sans-serif; }
@@ -178,6 +179,8 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .receipt-change { display: flex; justify-content: space-between; gap: 12px; }
 .receipt-status { padding: 14px 0; text-align: center; letter-spacing: 1px; }
 .receipt-confirmation { max-width: 420px; }
+.local-access { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.local-access code { display: block; overflow-wrap: anywhere; padding: 10px; border: 1px dashed var(--line); border-radius: 6px; background: #fff8fb; color: var(--ink); font-size: 12px; }
 .report-actions { display: flex; gap: 8px; margin: 12px 0; }
 .report-actions button { flex: 1; }
 .reports-view { font-size: 12px; }
