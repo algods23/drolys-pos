@@ -10,7 +10,9 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -223,8 +225,16 @@ public class WifiSyncPlugin extends Plugin {
                 while ((header = reader.readLine()) != null && !header.isEmpty()) {
                     if (header.toLowerCase().startsWith("content-length:")) contentLength = Integer.parseInt(header.substring(header.indexOf(':') + 1).trim());
                 }
+                if ("GET".equals(request[0]) && isMobileAsset(stripQuery(request[1]))) {
+                    respondAsset(connection, stripQuery(request[1]));
+                    return;
+                }
                 if ("GET".equals(request[0]) && "/".equals(stripQuery(request[1]))) {
-                    respond(connection, 200, "text/html; charset=utf-8", portalPage());
+                    if (portalAccessCode.isEmpty() || !portalAccessCode.equals(queryValue(request[1], "key"))) {
+                        respond(connection, 403, "text/plain; charset=utf-8", "Local admin access is unavailable.");
+                    } else {
+                        respond(connection, 200, "text/html; charset=utf-8", remoteAppPage(request[1]));
+                    }
                     return;
                 }
                 if ("GET".equals(request[0]) && "/portal".equals(stripQuery(request[1]))) {
@@ -233,6 +243,27 @@ public class WifiSyncPlugin extends Plugin {
                     } else {
                         respond(connection, 200, "application/json; charset=utf-8", portalPayload);
                     }
+                    return;
+                }
+                if ("POST".equals(request[0]) && "/remote-save".equals(stripQuery(request[1]))) {
+                    if (portalAccessCode.isEmpty() || !portalAccessCode.equals(queryValue(request[1], "key"))) {
+                        respond(connection, 403, "text/plain; charset=utf-8", "Local admin access is unavailable.");
+                        return;
+                    }
+                    char[] remoteBuffer = new char[contentLength];
+                    int remoteRead = 0;
+                    while (remoteRead < contentLength) {
+                        int count = reader.read(remoteBuffer, remoteRead, contentLength - remoteRead);
+                        if (count < 0) break;
+                        remoteRead += count;
+                    }
+                    String incomingRemoteData = new String(remoteBuffer, 0, remoteRead);
+                    getBridge().executeOnMainThread(() -> {
+                        JSObject event = new JSObject();
+                        event.put("payload", incomingRemoteData);
+                        notifyListeners("remoteDataReceived", event);
+                    });
+                    respond(connection, 200, "application/json; charset=utf-8", "{}");
                     return;
                 }
                 if (!"POST".equals(request[0]) || !"/sync".equals(stripQuery(request[1]))) {
@@ -279,6 +310,36 @@ public class WifiSyncPlugin extends Plugin {
                 if (value.length == 2 && key.equals(value[0])) return value[1];
             }
             return "";
+        }
+
+        private boolean isMobileAsset(String path) {
+            return path.matches("/[A-Za-z0-9._-]+\\.(js|css|jpg|png|webmanifest|ico)");
+        }
+
+        private void respondAsset(Socket connection, String path) throws IOException {
+            String asset = path.substring(1);
+            try (InputStream input = getContext().getAssets().open("public/" + asset); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[4096];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                String type = asset.endsWith(".css") ? "text/css; charset=utf-8" : asset.endsWith(".js") ? "application/javascript; charset=utf-8" : asset.endsWith(".png") ? "image/png" : asset.endsWith(".ico") ? "image/x-icon" : "image/jpeg";
+                respondBytes(connection, 200, type, output.toByteArray());
+            } catch (IOException error) {
+                respond(connection, 404, "text/plain; charset=utf-8", "Not found");
+            }
+        }
+
+        private void respondBytes(Socket connection, int status, String type, byte[] response) throws IOException {
+            OutputStream output = connection.getOutputStream();
+            output.write(("HTTP/1.1 " + status + " OK\r\nContent-Type: " + type + "\r\nContent-Length: " + response.length + "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+            output.write(response);
+            output.flush();
+        }
+
+        private String remoteAppPage(String requestPath) {
+            String key = queryValue(requestPath, "key");
+            String safePayload = portalPayload.replace("<", "\\u003c");
+            return "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1,viewport-fit=cover'><title>Drooly's POS</title><link rel='stylesheet' href='/styles.css?key=" + key + "'></head><body><div id='loading-screen' class='loading-screen'><img class='loading-logo' src='/droolys-logo.jpg' alt=\"Drooly's\"><div class='loading-dots'><span></span><span></span><span></span><span></span><span></span></div></div><main id='app'></main><script>window.__DROOLYS_REMOTE_DB__=" + safePayload + ";</script><script src='/app.js?key=" + key + "'></script></body></html>";
         }
 
         private String portalPage() {

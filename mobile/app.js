@@ -43,23 +43,46 @@ const seed = {
     expenses: [],
 };
 
+const remoteMode = Boolean(window.__DROOLYS_REMOTE_DB__);
+let remoteDb = remoteMode ? structuredClone(window.__DROOLYS_REMOTE_DB__) : null;
+let remoteUser = null;
+
 const store = {
     read() {
+        if (remoteMode) return structuredClone(remoteDb || seed);
         const saved = localStorage.getItem('droolys.mobile.db');
         if (saved) return JSON.parse(saved);
         this.write(seed);
         return structuredClone(seed);
     },
     write(db) {
+        if (remoteMode) {
+            remoteDb = structuredClone(db);
+            fetch(`/remote-save${location.search}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(remoteDb),
+            }).catch(() => {});
+            return;
+        }
         localStorage.setItem('droolys.mobile.db', JSON.stringify(db));
     },
     session() {
+        if (remoteMode) return remoteUser;
         return JSON.parse(localStorage.getItem('droolys.mobile.user') || 'null');
     },
     setSession(user) {
+        if (remoteMode) {
+            remoteUser = user;
+            return;
+        }
         localStorage.setItem('droolys.mobile.user', JSON.stringify(user));
     },
     logout() {
+        if (remoteMode) {
+            remoteUser = null;
+            return;
+        }
         localStorage.removeItem('droolys.mobile.user');
     },
 };
@@ -104,6 +127,7 @@ let syncStatus = '';
 let syncServer = null;
 let syncAdmin = null;
 let syncListenerReady = false;
+let remoteListenerReady = false;
 let localPortal = null;
 let posCategoryFilter = 'All';
 let archivedDateFilter = '';
@@ -217,12 +241,7 @@ function createLocalAccessCode() {
 }
 
 function localPortalPayload() {
-    return JSON.stringify({
-        updatedAt: new Date().toISOString(),
-        orders: db.orders,
-        products: db.products,
-        expenses: db.expenses,
-    });
+    return JSON.stringify(db);
 }
 
 function refreshLocalPortal() {
@@ -339,6 +358,21 @@ async function setupSyncListener() {
             if (syncServer) await syncPlugin().setServerPayload({ payload: syncPayload('admin-orders', todaysSyncOrders()) });
         }
         render();
+    });
+}
+
+async function setupRemoteListener() {
+    if (remoteListenerReady || !syncPlugin()?.addListener) return;
+    remoteListenerReady = true;
+    await syncPlugin().addListener('remoteDataReceived', ({ payload }) => {
+        try {
+            const incoming = JSON.parse(payload || '{}');
+            if (!Array.isArray(incoming.users) || !Array.isArray(incoming.products) || !Array.isArray(incoming.orders)) return;
+            db = incoming;
+            persist();
+            render();
+        } catch {
+        }
     });
 }
 
@@ -860,6 +894,7 @@ function render() {
         return;
     }
     setupSyncListener();
+    setupRemoteListener();
     const views = { dashboard, pos, preorders, archived, reports, inventory };
     document.getElementById('app').innerHTML = appShell(views[tab]());
     document.getElementById('app').classList.toggle('reports-view', tab === 'reports');
@@ -1371,7 +1406,7 @@ function updateCartTotal() {
     if (total) total.textContent = peso(subtotal + fee);
 }
 
-if ('serviceWorker' in navigator) {
+if (!remoteMode && 'serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
