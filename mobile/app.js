@@ -93,7 +93,11 @@ db.expenses = (db.expenses || []).map((expense) => ({
     quantity: Number(expense.quantity || 1),
     amount: Number(expense.amount || 0),
 }));
-db.products = db.products.map((product) => ({ ...product, active: product.active !== false }));
+db.products = db.products.map((product) => ({
+    ...product,
+    active: product.active !== false,
+    piecesPerUnit: productPiecesPerUnit(product),
+}));
 db.users = db.users.map((account) => account.id === 2 ? { ...account, name: 'Algods', email: 'algods@droolys.local', role: 'rider' } : account);
 db.orders = db.orders.map((order) => ({
     ...order,
@@ -104,7 +108,8 @@ db.orders = db.orders.map((order) => ({
     paymentMethod: order.paymentMethod || 'cash',
     amountReceived: Number(order.amountReceived || 0),
     tenderedAmount: Number(order.tenderedAmount ?? (Number(order.amountReceived || 0) + Math.max(0, Number(order.change || 0)))),
-    payments: Array.isArray(order.payments) ? order.payments.map((payment) => ({ method: payment.method || 'cash', amount: Number(payment.amount || 0) })) : (Number(order.amountReceived || 0) > 0 ? [{ method: order.paymentMethod || 'cash', amount: Number(order.amountReceived) }] : []),
+    payments: Array.isArray(order.payments) ? order.payments.map((payment) => ({ method: payment.method || 'cash', amount: Number(payment.amount || 0), paidAt: payment.paidAt || '' })) : (Number(order.amountReceived || 0) > 0 ? [{ method: order.paymentMethod || 'cash', amount: Number(order.amountReceived), paidAt: order.paidAt || order.createdAt || '' }] : []),
+    paidAt: order.paidAt || (Number(order.amountReceived || 0) >= Number(order.total || 0) ? order.createdAt || '' : ''),
     status: order.status || (order.amountReceived >= order.total ? 'paid' : 'partial'),
 }));
 let user = store.session();
@@ -160,6 +165,24 @@ function salesAmount(order) {
     return Number(order.total || 0);
 }
 
+function productPiecesPerUnit(product) {
+    const pieces = Number(product?.piecesPerUnit || 1);
+    return Number.isFinite(pieces) ? Math.max(1, Math.floor(pieces)) : 1;
+}
+
+function soldPieces(item) {
+    const product = db.products.find((candidate) => String(candidate.id) === String(item.productId || item.id))
+        || db.products.find((candidate) => candidate.name === item.name);
+    return Number(item.qty || 0) * productPiecesPerUnit(item.piecesPerUnit ? item : product);
+}
+
+function addProductCounts(counts, order) {
+    order.items.forEach((item) => {
+        counts[item.name] = (counts[item.name] || 0) + soldPieces(item);
+    });
+    return counts;
+}
+
 function isPaidOrder(order) {
     return Number(order.amountReceived || 0) >= Number(order.total || 0);
 }
@@ -192,6 +215,15 @@ function paymentBreakdown(order) {
     return totals;
 }
 
+function salesPaymentTotals(orders) {
+    return orders.reduce((totals, order) => {
+        const breakdown = paymentBreakdown(order);
+        totals.cash += breakdown.cash;
+        totals.gcash += breakdown.gcash;
+        return totals;
+    }, { cash: 0, gcash: 0 });
+}
+
 function nextReceiptNumber() {
     const highest = db.orders.reduce((max, order) => {
         const match = String(order.receipt || '').match(/^DRL-(\d+)$/);
@@ -201,7 +233,7 @@ function nextReceiptNumber() {
 }
 
 function reportDate(order) {
-    return philippineDate(new Date(order.createdAt));
+    return philippineDate(new Date(order.paidAt || order.createdAt));
 }
 
 function reportDateLabel(date) {
@@ -261,8 +293,12 @@ function syncOrderKey(order) {
     return String(order?.receipt || '').trim();
 }
 
+function isRiderDeliveryOrder(order) {
+    return order?.fulfillment !== 'pickup';
+}
+
 function todaysSyncOrders() {
-    return db.orders.filter((order) => order.scheduledDate === today() && syncOrderKey(order));
+    return db.orders.filter((order) => order.scheduledDate === today() && isRiderDeliveryOrder(order) && syncOrderKey(order));
 }
 
 function syncPayload(type, orders = []) {
@@ -291,6 +327,7 @@ function riderUpdate(order) {
         change: Number(order.change || 0),
         paymentMethod: order.paymentMethod || 'cash',
         payments: Array.isArray(order.payments) ? order.payments : [],
+        paidAt: order.paidAt || '',
         deliveredAt: order.deliveredAt || '',
     };
 }
@@ -302,7 +339,7 @@ function importAdminOrders(payload) {
     let added = 0;
     let updated = 0;
 
-    orders.filter((order) => order?.scheduledDate === today() && syncOrderKey(order)).forEach((remote) => {
+    orders.filter((order) => order?.scheduledDate === today() && isRiderDeliveryOrder(order) && syncOrderKey(order)).forEach((remote) => {
         const key = syncOrderKey(remote);
         const local = localOrders.get(key);
         if (!local) {
@@ -340,6 +377,7 @@ function applyRiderUpdates(payload) {
         local.change = Number(remote.change || 0);
         local.paymentMethod = remote.paymentMethod || local.paymentMethod;
         local.payments = Array.isArray(remote.payments) ? remote.payments : local.payments || [];
+        local.paidAt = remote.paidAt || local.paidAt || '';
         local.deliveredAt = remote.deliveredAt || local.deliveredAt || '';
         updated += 1;
     });
@@ -487,12 +525,12 @@ function dashboard() {
     const tomorrowOrders = db.orders.filter((order) => order.scheduledDate === tomorrow() && order.status !== 'delivered');
     const rangeOrders = db.orders.filter((order) => {
         if (!isPaidOrder(order)) return false;
-        const date = philippineDate(new Date(order.createdAt));
+        const date = reportDate(order);
         return date >= homeStart && date <= homeEnd;
     });
     const chartDays = {};
     rangeOrders.forEach((order) => {
-        const date = philippineDate(new Date(order.createdAt));
+        const date = reportDate(order);
         chartDays[date] = (chartDays[date] || 0) + salesAmount(order);
     });
     const chartValues = Object.entries(chartDays).sort(([a], [b]) => a.localeCompare(b));
@@ -515,7 +553,7 @@ function dashboard() {
 }
 
 function riderDashboard() {
-    const orders = db.orders.filter((order) => order.scheduledDate === today() && order.status !== 'delivered');
+    const orders = db.orders.filter((order) => order.scheduledDate === today() && isRiderDeliveryOrder(order) && order.status !== 'delivered');
     const sales = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
     const toCollect = orders.reduce((sum, order) => sum + Math.max(0, Number(order.total || 0) - Number(order.amountReceived || 0)), 0);
     return `<section class="panel stack"><h2>Today's deliveries</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>To collect</span><strong>${peso(toCollect)}</strong></div></div><p class="hint">${orders.length} scheduled order${orders.length === 1 ? '' : 's'} today.</p></section>${syncPanel()}`;
@@ -566,7 +604,7 @@ function pos() {
     }
 
 function preorders() {
-    const orders = db.orders.filter((order) => order.mode === 'preorder' && order.status !== 'delivered' && (user.role !== 'rider' || order.scheduledDate === today())).sort((a, b) => `${a.scheduledDate}T${a.scheduledTime || '23:59'}`.localeCompare(`${b.scheduledDate}T${b.scheduledTime || '23:59'}`));
+    const orders = db.orders.filter((order) => order.mode === 'preorder' && order.status !== 'delivered' && (user.role !== 'rider' || (order.scheduledDate === today() && isRiderDeliveryOrder(order)))).sort((a, b) => `${a.scheduledDate}T${a.scheduledTime || '23:59'}`.localeCompare(`${b.scheduledDate}T${b.scheduledTime || '23:59'}`));
     const routeDate = user.role === 'rider' ? today() : scheduleDate;
     const requirements = {};
     orders.filter((order) => order.scheduledDate === routeDate).forEach((order) => {
@@ -588,7 +626,7 @@ function preorders() {
 function archivedOrdersList() {
     const delivered = db.orders.filter((order) => order.status === 'delivered');
     const sorted = delivered.sort((a, b) => `${b.scheduledDate}T${b.scheduledTime || ''}`.localeCompare(`${a.scheduledDate}T${a.scheduledTime || ''}`));
-    if (user.role === 'rider') return sorted.filter((order) => order.scheduledDate === today());
+    if (user.role === 'rider') return sorted.filter((order) => order.scheduledDate === today() && isRiderDeliveryOrder(order));
     if (archivedDateFilter) return sorted.filter((order) => order.scheduledDate === archivedDateFilter);
     return sorted;
 }
@@ -644,14 +682,14 @@ function orderModal() {
 
 function legacyReports() {
     const orders = db.orders.filter((order) => {
-        const date = order.createdAt.slice(0, 10);
+        const date = reportDate(order);
         return date >= reportStart && date <= reportEnd;
     });
     const sales = orders.reduce((sum, order) => sum + salesAmount(order), 0);
     const expenses = db.expenses || [];
     const expenseTotal = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd).reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0);
     const productCounts = {};
-    orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
+    orders.forEach((order) => addProductCounts(productCounts, order));
     const selectedExpenses = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
     return `
         <div class="report-range-row"><label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
@@ -671,9 +709,10 @@ function reports() {
     const expenses = db.expenses || [];
     const selectedExpenses = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
     const sales = orders.reduce((sum, order) => sum + salesAmount(order), 0);
+    const paymentTotals = salesPaymentTotals(orders);
     const expenseTotal = selectedExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0);
     const productCounts = {};
-    orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
+    orders.forEach((order) => addProductCounts(productCounts, order));
     const salesByDate = orders.reduce((groups, order) => {
         (groups[reportDate(order)] ||= []).push(order);
         return groups;
@@ -682,29 +721,32 @@ function reports() {
         (groups[expense.date] ||= []).push(expense);
         return groups;
     }, {});
-    const salesRows = Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => `<tr><th colspan="2">${reportDateLabel(date)}</th></tr>${dayOrders.map((order) => `<tr><td>${order.customer.name || 'No customer name'}<br><small>${order.paymentMethod}</small></td><td>${peso(salesAmount(order))}</td></tr>`).join('')}`).join('');
+    const salesRows = Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => `<tr><th colspan="2">${reportDateLabel(date)}</th></tr>${dayOrders.map((order) => `<tr><td>${order.customer.name || 'No customer name'}<br><small>${paymentMethodsLabel(order) || order.paymentMethod}</small></td><td>${peso(salesAmount(order))}</td></tr>`).join('')}`).join('');
     const expenseRows = Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `<tr><th colspan="3">${reportDateLabel(date)}</th></tr>${dayExpenses.map((expense) => `<tr><td>${expense.description}<br><small>${expense.quantity} x ${peso(expense.amount)}</small></td><td>${peso(calculateExpenseTotal(expense))}</td><td><div class="row-actions"><button class="secondary compact" data-edit-expense="${expense.id}">Edit</button><button class="danger compact" data-delete-expense="${expense.id}">Delete</button></div></td></tr>`).join('')}`).join('');
     const salesSummary = Object.entries(salesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayOrders]) => `<div class="cart-row"><span>${reportDateLabel(date)}</span><strong>${peso(dayOrders.reduce((sum, order) => sum + salesAmount(order), 0))}</strong></div>`).join('');
     const expenseSummary = Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `<div class="cart-row"><span>${reportDateLabel(date)}</span><strong>${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}</strong></div>`).join('');
     const expenseDescriptionSummary = Object.entries(expenseTotalsByDescription(selectedExpenses)).map(([description, total]) => `<div class="cart-row"><span>${description}</span><strong>${peso(total)}</strong></div>`).join('');
-    const productSummary = Object.entries(productCounts).sort(([first], [second]) => first.localeCompare(second)).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count}</strong></div>`).join('');
+    const productSummary = Object.entries(productCounts).sort(([first], [second]) => first.localeCompare(second)).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count} pcs</strong></div>`).join('');
     return `
         <div class="report-range-row"><label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
         <section class="panel stack compact-form"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2>${expenseFormMarkup()}<div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
-        ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${salesRows || '<tr><td>No sales for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${expenseRows || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
+        ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong><small class="metric-detail">Cash ${peso(paymentTotals.cash)}</small><small class="metric-detail">GCash ${peso(paymentTotals.gcash)}</small></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${salesRows || '<tr><td>No sales for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${expenseRows || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
         ${reportSummaryVisible ? '' : '<button class="compact-action" data-action="toggleReportSummary">Generate summary</button>'}
-        ${reportSummaryVisible ? `<section class="panel range-summary"><h2>Range summary</h2><div class="range-summary-grid"><section class="summary-column"><h3>Sales by date</h3><div class="summary-list">${salesSummary || '<p class="hint">No sales recorded.</p>'}</div><div class="summary-total"><span>Total Sales</span><strong>${peso(sales)}</strong></div><div class="summary-profit"><span>Profit</span><strong>${peso(sales - expenseTotal)}</strong></div></section><section class="summary-column"><h3>Expenses by date</h3><div class="summary-list">${expenseSummary || '<p class="hint">No expenses recorded.</p>'}</div><div class="summary-total"><span>Total Expenses</span><strong>${peso(expenseTotal)}</strong></div><h3 class="summary-secondary-heading">Items</h3><div class="summary-list">${expenseDescriptionSummary || '<p class="hint">No items recorded.</p>'}</div></section></div><section class="summary-products"><h3>Products sold</h3><div class="products-sold-grid">${productSummary || '<p class="hint">No products sold.</p>'}</div></section></section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Export Information</button></div>` : ''}`;
+        ${reportSummaryVisible ? `<section class="panel range-summary"><h2>Range summary</h2><div class="range-summary-grid"><section class="summary-column"><h3>Sales by date</h3><div class="summary-list">${salesSummary || '<p class="hint">No sales recorded.</p>'}</div><div class="summary-total"><span>Total Sales</span><strong>${peso(sales)}</strong></div><div class="cart-row"><span>Cash collected</span><strong>${peso(paymentTotals.cash)}</strong></div><div class="cart-row"><span>GCash collected</span><strong>${peso(paymentTotals.gcash)}</strong></div><div class="summary-profit"><span>Profit</span><strong>${peso(sales - expenseTotal)}</strong></div></section><section class="summary-column"><h3>Expenses by date</h3><div class="summary-list">${expenseSummary || '<p class="hint">No expenses recorded.</p>'}</div><div class="summary-total"><span>Total Expenses</span><strong>${peso(expenseTotal)}</strong></div><h3 class="summary-secondary-heading">Items</h3><div class="summary-list">${expenseDescriptionSummary || '<p class="hint">No items recorded.</p>'}</div></section></div><section class="summary-products"><h3>Products sold</h3><div class="products-sold-grid">${productSummary || '<p class="hint">No products sold.</p>'}</div></section></section><div class="report-summary-actions"><button class="secondary" data-action="toggleReportSummary">Hide summary</button><button data-action="shareReportSummary">Export Information</button></div>` : ''}`;
 }
 
 function drawReportSummaryCanvas(context, {
     sales,
     expenseTotal,
+    paymentTotals,
     salesByDate,
     expensesByDate,
     expensesByDescription,
     productCounts,
 }) {
+    const totalCash = paymentTotals?.cash ?? 0;
+    const totalGcash = paymentTotals?.gcash ?? 0;
     const lineHeight = 32;
     const leftX = 60;
     const rightX = 630;
@@ -714,7 +756,7 @@ function drawReportSummaryCanvas(context, {
     const productEntries = Object.entries(productCounts).sort(([first], [second]) => first.localeCompare(second));
     const twoColRows = Math.max(salesLines.length, expenseLines.length, 1);
     const productRows = Math.max(1, Math.ceil(productEntries.length / 2));
-    const leftColumnHeight = 2 * lineHeight + (twoColRows * lineHeight) + 2 * lineHeight + 60;
+    const leftColumnHeight = 2 * lineHeight + (twoColRows * lineHeight) + 4 * lineHeight + 60;
     const rightColumnHeight = 2 * lineHeight + (twoColRows * lineHeight) + 2 * lineHeight + 34 + (descriptionLines.length || 1) * lineHeight + 60;
     return {
         height: Math.max(700, 260 + Math.max(leftColumnHeight, rightColumnHeight) + productRows * lineHeight),
@@ -741,6 +783,11 @@ function drawReportSummaryCanvas(context, {
             context.fillText(peso(sales), leftX, y);
             context.fillText(peso(expenseTotal), rightX, y);
             y += lineHeight;
+            context.font = '22px Lato, Arial, sans-serif';
+            context.fillText(`Cash: ${peso(totalCash)}`, leftX, y);
+            y += lineHeight;
+            context.fillText(`GCash: ${peso(totalGcash)}`, leftX, y);
+            y += lineHeight;
             context.font = 'bold 22px Lato, Arial, sans-serif';
             context.fillText(`Profit: ${peso(sales - expenseTotal)}`, leftX, y);
             context.font = 'bold 26px Lato, Arial, sans-serif';
@@ -760,7 +807,7 @@ function drawReportSummaryCanvas(context, {
             productEntries.forEach(([name, count], index) => {
                 const columnX = index % 2 === 0 ? leftX : rightX;
                 const row = Math.floor(index / 2);
-                context.fillText(`${name}: ${count}`, columnX, productsY + lineHeight + row * lineHeight);
+            context.fillText(`${name}: ${count} pcs`, columnX, productsY + lineHeight + row * lineHeight);
             });
             return productsY + lineHeight + productRows * lineHeight;
         },
@@ -770,14 +817,15 @@ function drawReportSummaryCanvas(context, {
 async function shareReportSummary() {
     const orders = db.orders.filter((order) => {
         if (!isPaidOrder(order)) return false;
-        const date = philippineDate(new Date(order.createdAt));
+        const date = reportDate(order);
         return date >= reportStart && date <= reportEnd;
     });
     const expenses = (db.expenses || []).filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
     const sales = orders.reduce((sum, order) => sum + salesAmount(order), 0);
+    const paymentTotals = salesPaymentTotals(orders);
     const expenseTotal = expenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0);
     const productCounts = {};
-    orders.forEach((order) => order.items.forEach((item) => productCounts[item.name] = (productCounts[item.name] || 0) + item.qty));
+    orders.forEach((order) => addProductCounts(productCounts, order));
     const salesByDate = orders.reduce((groups, order) => {
         (groups[reportDate(order)] ||= []).push(order);
         return groups;
@@ -790,6 +838,7 @@ async function shareReportSummary() {
     const layout = drawReportSummaryCanvas(null, {
         sales,
         expenseTotal,
+        paymentTotals,
         ordersCount: orders.length,
         salesByDate,
         expensesByDate,
@@ -828,6 +877,7 @@ async function shareReportSummary() {
     drawReportSummaryCanvas(context, {
         sales,
         expenseTotal,
+        paymentTotals,
         ordersCount: orders.length,
         salesByDate,
         expensesByDate,
@@ -836,7 +886,7 @@ async function shareReportSummary() {
     }).draw(198);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
     const file = new File([blob], `droolys-summary-${reportStart}-to-${reportEnd}.jpg`, { type: 'image/jpeg' });
-    const shareText = `${reportStart} to ${reportEnd}. Sales: ${peso(sales)}. Expenses: ${peso(expenseTotal)}. Profit: ${peso(sales - expenseTotal)}.`;
+    const shareText = `${reportStart} to ${reportEnd}. Sales: ${peso(sales)} (Cash ${peso(paymentTotals.cash)}, GCash ${peso(paymentTotals.gcash)}). Expenses: ${peso(expenseTotal)}. Profit: ${peso(sales - expenseTotal)}.`;
     if (await shareWithAndroid(file, blob, shareText)) return;
     if (navigator.share) {
         if (!navigator.canShare || navigator.canShare({ files: [file] })) {
@@ -862,13 +912,15 @@ function inventory() {
             <input id="pName" placeholder="Product name">
             <input id="pCategory" list="categoryOptions" placeholder="Category">
             <datalist id="categoryOptions">${categoryOptions}</datalist>
-            <input id="pPrice" type="number" placeholder="Price">
+            <input id="pPrice" type="number" min="0" step="0.01" placeholder="Price">
+            <label>Pieces counted per product sold <input id="pPiecesPerUnit" type="number" min="1" step="1" list="pieceCountOptions" value="1"></label>
+            <datalist id="pieceCountOptions"><option value="1">1 piece</option><option value="6">6 pieces</option></datalist>
             <button class="compact-action" data-action="saveProduct">Save Product</button>
             </div>
         </section>
         <section class="panel inventory-panel" style="margin-top:12px">
             <h2>Products</h2>
-            <table><tbody>${db.products.map((p) => `<tr><td>${p.name}<br><small>${p.category}</small><br><small class="${p.active ? 'status-active' : 'status-inactive'}">${p.active ? 'Active' : 'Inactive'}</small></td><td>${peso(p.price)}</td><td><details class="product-actions"><summary>Actions</summary><div class="row-actions"><button class="secondary compact" data-edit-product="${p.id}">Edit</button><button class="${p.active ? 'danger' : ''} secondary compact" data-toggle-product="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button><button class="danger compact" data-delete-product="${p.id}">Delete</button></div></details></td></tr>`).join('')}</tbody></table>
+            <table><tbody>${db.products.map((p) => `<tr><td>${p.name}<br><small>${p.category} | ${productPiecesPerUnit(p)} ${productPiecesPerUnit(p) === 1 ? 'piece' : 'pieces'} per sale</small><br><small class="${p.active ? 'status-active' : 'status-inactive'}">${p.active ? 'Active' : 'Inactive'}</small></td><td>${peso(p.price)}</td><td><details class="product-actions"><summary>Actions</summary><div class="row-actions"><button class="secondary compact" data-edit-product="${p.id}">Edit</button><button class="${p.active ? 'danger' : ''} secondary compact" data-toggle-product="${p.id}">${p.active ? 'Deactivate' : 'Activate'}</button><button class="danger compact" data-delete-product="${p.id}">Delete</button></div></details></td></tr>`).join('')}</tbody></table>
         </section>
         `;
 }
@@ -1031,7 +1083,7 @@ async function shareOrder(orderId) {
 
 function addToCart(id) {
     const product = db.products.find((p) => p.id === Number(id));
-    const existing = cart.get(product.id) || { id: product.id, name: product.name, price: product.price, qty: 0 };
+    const existing = cart.get(product.id) || { id: product.id, name: product.name, price: product.price, piecesPerUnit: productPiecesPerUnit(product), qty: 0 };
     existing.qty += 1;
     cart.set(product.id, existing);
     render();
@@ -1055,6 +1107,7 @@ function checkout() {
     const tenderedAmount = Number(document.getElementById('amountReceived')?.value || 0);
     const amountReceived = Math.min(Math.max(0, tenderedAmount), total);
     const paymentMethod = document.querySelector('input[name="paymentMethod"]:checked')?.value || 'cash';
+    const createdAt = new Date().toISOString();
     db.orders.push({
         id: Date.now(),
         receipt: nextReceiptNumber(),
@@ -1074,10 +1127,11 @@ function checkout() {
         paymentMethod,
         amountReceived,
         tenderedAmount,
-        payments: amountReceived > 0 ? [{ method: paymentMethod, amount: amountReceived }] : [],
+        payments: amountReceived > 0 ? [{ method: paymentMethod, amount: amountReceived, paidAt: createdAt }] : [],
+        paidAt: amountReceived >= total ? createdAt : '',
         change: Math.max(0, tenderedAmount - total),
         status: amountReceived >= total ? 'paid' : 'partial',
-        createdAt: new Date().toISOString(),
+        createdAt,
     });
     confirmationOrderId = db.orders[db.orders.length - 1].id;
     cart = new Map();
@@ -1212,7 +1266,7 @@ document.addEventListener('click', (event) => {
         const itemRows = [...document.querySelectorAll('.modal-order-item')];
         order.items = itemRows.map((row) => {
                 const product = db.products.find((item) => item.id === Number(row.querySelector('.modal-item-product').value));
-                return { id: product.id, name: product.name, price: Number(product.price), qty: Number(row.querySelector('.modal-item-quantity').value || 0) };
+                return { id: product.id, name: product.name, price: Number(product.price), qty: Number(row.querySelector('.modal-item-quantity').value || 0), piecesPerUnit: productPiecesPerUnit(product) };
             }).filter((item) => item.qty > 0);
         order.deliveryFee = order.fulfillment === 'delivery' ? Number(document.getElementById('modalDeliveryFee')?.value || 0) : 0;
         order.total = order.items.reduce((sum, item) => sum + item.price * item.qty, 0) + order.deliveryFee;
@@ -1232,12 +1286,13 @@ document.addEventListener('click', (event) => {
         if (!creditedPayment) return;
         if (!confirm(`Save payment of ${peso(creditedPayment)}${change ? ` and return ${peso(change)} change` : ''}?`)) return;
         order.payments = Array.isArray(order.payments) ? order.payments : (order.amountReceived > 0 ? [{ method: order.paymentMethod || 'cash', amount: Number(order.amountReceived) }] : []);
-        order.payments.push({ method: paymentMethod, amount: creditedPayment });
+        order.payments.push({ method: paymentMethod, amount: creditedPayment, paidAt: new Date().toISOString() });
         order.amountReceived = currentReceived + creditedPayment;
         order.tenderedAmount = orderTendered(order) + additionalPayment;
         order.paymentMethod = paymentMethod;
         order.change = Math.max(0, order.tenderedAmount - order.amountReceived);
         order.status = order.amountReceived >= order.total ? 'paid' : 'partial';
+        if (order.status === 'paid') order.paidAt = new Date().toISOString();
         persist();
         render();
         sendRiderUpdatesAfterPayment();
@@ -1278,6 +1333,7 @@ document.addEventListener('click', (event) => {
         product.name = document.getElementById('pName').value.trim();
         product.category = document.getElementById('pCategory').value.trim() || 'General';
         product.price = Number(document.getElementById('pPrice').value || 0);
+        product.piecesPerUnit = productPiecesPerUnit({ piecesPerUnit: document.getElementById('pPiecesPerUnit').value });
         if (!Array.isArray(db.categories)) db.categories = [];
         if (product.category && !db.categories.includes(product.category)) db.categories.push(product.category);
         if (product.name && !id) db.products.push(product);
@@ -1297,6 +1353,7 @@ document.addEventListener('click', (event) => {
         document.getElementById('pName').value = product.name;
         document.getElementById('pCategory').value = product.category;
         document.getElementById('pPrice').value = product.price;
+        document.getElementById('pPiecesPerUnit').value = productPiecesPerUnit(product);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
     if (target.dataset.toggleProduct) {
