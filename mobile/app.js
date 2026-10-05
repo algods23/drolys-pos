@@ -111,6 +111,7 @@ db.orders = db.orders.map((order) => ({
     payments: Array.isArray(order.payments) ? order.payments.map((payment) => ({ method: payment.method || 'cash', amount: Number(payment.amount || 0), paidAt: payment.paidAt || '' })) : (Number(order.amountReceived || 0) > 0 ? [{ method: order.paymentMethod || 'cash', amount: Number(order.amountReceived), paidAt: order.paidAt || order.createdAt || '' }] : []),
     paidAt: order.paidAt || (Number(order.amountReceived || 0) >= Number(order.total || 0) ? order.createdAt || '' : ''),
     status: order.status || (order.amountReceived >= order.total ? 'paid' : 'partial'),
+    bakedAt: order.bakedAt || '',
 }));
 let user = store.session();
 if (user?.id === 2) user = { ...user, name: 'Algods', email: 'algods@droolys.local', role: 'rider' };
@@ -659,6 +660,14 @@ function pos() {
         return `<div class="modal-backdrop"><section class="receipt modal receipt-confirmation"><div class="receipt-top"><div><strong>CHECK ORDER</strong><small>REVIEW BEFORE SERVING</small></div><button class="secondary compact" data-action="closeConfirmation">Close</button></div><div class="receipt-meta"><span>${order.receipt}</span><span class="receipt-schedule"><span>${order.scheduledDate} ${formatTime(order.scheduledTime)}</span><span class="receipt-fulfillment">${order.fulfillment === 'pickup' ? 'PICK-UP' : 'DELIVERY'}</span></span></div><div class="receipt-customer"><div class="receipt-customer-heading"><strong>${order.customer.name}</strong><span class="receipt-order-status">${order.status.toUpperCase()}</span></div></div><div class="receipt-items"><div class="receipt-line receipt-label"><span>ITEM</span><span>QTY</span><span>AMOUNT</span></div>${order.items.map((item) => `<div class="receipt-line"><span>${item.name}</span><span>${item.qty}</span><span>${peso(item.price * item.qty)}</span></div>`).join('')}</div><div class="receipt-totals"><div><span>TOTAL</span><strong>${peso(order.total)}</strong></div><div><span>RECEIVED</span><strong>${peso(order.amountReceived)}</strong></div></div>${paymentLabel ? `<div class="receipt-status">${paymentLabel}</div>` : ''}<div class="receipt-footer-actions"><button class="compact btn-oneline" data-action="shareOrder" data-order-id="${order.id}">Share receipt</button><button class="secondary compact btn-oneline" data-action="closeConfirmation">Done</button></div></section></div>`;
     }
 
+function bakedToggleButton(order) {
+    if (user.role !== 'admin') return '';
+    if (order.bakedAt) {
+        return `<button type="button" class="not-baked-button compact btn-oneline" data-action="markUnbaked" data-order-id="${order.id}" aria-pressed="true" title="This order is marked baked. Tap to mark it not baked.">Not baked</button>`;
+    }
+    return `<button type="button" class="baked-button compact btn-oneline" data-action="markBaked" data-order-id="${order.id}" aria-pressed="false" title="This order is not marked baked. Tap to mark it baked.">Baked</button>`;
+}
+
 function preorders() {
     const orders = db.orders.filter((order) => order.mode === 'preorder' && order.status !== 'delivered' && (user.role !== 'rider' || (order.scheduledDate === today() && isRiderDeliveryOrder(order)))).sort((a, b) => `${a.scheduledDate}T${a.scheduledTime || '23:59'}`.localeCompare(`${b.scheduledDate}T${b.scheduledTime || '23:59'}`));
     const routeDate = user.role === 'rider' ? today() : scheduleDate;
@@ -674,7 +683,7 @@ function preorders() {
         </section>
         <section class="panel" style="margin-top:12px">
             <h2>Orders</h2>
-            <table><thead><tr><th>Time</th><th>Customer</th><th>Order</th></tr></thead><tbody>${orders.map((o) => `<tr><td><strong>${formatTime(o.scheduledTime)}</strong></td><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.fulfillment === 'pickup' ? 'Pick-up' : 'Delivery'}</small></td><td><small>Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small><br><div class="row-actions order-list-actions">${user.role === 'admin' ? `<button class="baked-button compact btn-oneline" data-action="markBaked" data-order-id="${o.id}" ${o.bakedAt ? 'disabled' : ''}>Baked</button>` : ''}<button class="secondary compact btn-oneline" data-order="${o.id}">View details</button></div></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
+            <table><thead><tr><th>Time</th><th>Customer</th><th>Order</th></tr></thead><tbody>${orders.map((o) => `<tr class="${o.bakedAt ? 'order-baked' : ''}"><td><strong>${formatTime(o.scheduledTime)}</strong></td><td><strong>${o.customer.name || 'No customer name'}</strong><br><small>${o.fulfillment === 'pickup' ? 'Pick-up' : 'Delivery'}</small></td><td><small>Balance ${peso(Math.max(0, o.total - o.amountReceived))}</small><br><div class="row-actions order-list-actions">${bakedToggleButton(o)}<button class="secondary compact btn-oneline" data-order="${o.id}">View details</button></div></td></tr>`).join('') || '<tr><td>No pre-orders.</td></tr>'}</tbody></table>
         </section>
         ${orderModal()}${callClientAction()}`;
 }
@@ -725,7 +734,7 @@ function orderModal() {
         const paymentInput = balance > 0 ? `<fieldset class="choice-group"><legend>Payment method</legend><label class="choice"><input type="radio" name="modalPaymentMethod" value="cash" checked> Cash</label><label class="choice"><input type="radio" name="modalPaymentMethod" value="gcash"> GCash</label></fieldset><label>Payment received <input id="modalAmountReceived" type="number" min="0" step="0.01" value="" placeholder="Enter next payment"></label>` : `<div class="receipt-change"><span>CHANGE</span><strong>${peso(change)}</strong></div>`;
             const itemEditor = orderEditor(order);
             const customerEditor = user.role === 'rider' ? '' : `<section id="orderEditor" class="edit-order stack hidden"><h3>Update order information</h3><label>Delivery or pick-up <select id="modalFulfillment"><option value="delivery" ${order.fulfillment === 'delivery' ? 'selected' : ''}>Delivery</option><option value="pickup" ${order.fulfillment === 'pickup' ? 'selected' : ''}>Pick-up</option></select></label><label>Order time <input id="modalScheduledTime" type="time" value="${order.scheduledTime}"></label><label>Customer name <input id="modalCustomerName" value="${order.customer.name || ''}"></label><label>Contact number <input id="modalCustomerContact" value="${order.customer.contact || ''}"></label><label>Address or pick-up note <input id="modalCustomerAddress" value="${order.customer.address || ''}"></label><label>Delivery fee <input id="modalDeliveryFee" type="number" min="0" step="0.01" value="${order.deliveryFee || 0}"></label>${itemEditor}<button data-action="updateOrder" data-order-id="${order.id}">Update order</button></section>`;
-            const headerActions = `${user.role === 'rider' ? '' : `<button class="secondary compact" data-action="toggleOrderEditor">Update</button>${tab === 'archived' ? `<button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button>` : ''}` }<button class="secondary compact" data-action="closeModal">Close</button>`;
+            const headerActions = `${user.role === 'rider' ? '' : `<button class="secondary compact" data-action="toggleOrderEditor">Update</button>${tab === 'preorders' || tab === 'archived' ? `<button class="danger compact" data-action="deleteOrder" data-order-id="${order.id}">Delete</button>` : ''}` }<button class="secondary compact" data-action="closeModal">Close</button>`;
             const completionAction = order.status !== 'delivered' && Number(order.amountReceived || 0) >= Number(order.total || 0) ? `<button class="compact-action" data-action="${order.fulfillment === 'pickup' ? 'markPickedUp' : 'markDelivered'}">${order.fulfillment === 'pickup' ? 'Confirm pick-up' : 'Mark as delivered'}</button>` : '';
             const receiptActions = `${balance > 0 ? `<button class="compact-action" data-action="updatePayment" data-order-id="${order.id}">Save payment</button>` : completionAction}<button class="compact btn-oneline" data-action="shareOrder" data-order-id="${order.id}">Share receipt</button>`;
             const paymentLabel = paymentMethodsLabel(order);
@@ -1017,7 +1026,7 @@ function render() {
     if (modalOrderId && db.orders.find((order) => order.id === modalOrderId)?.status === 'delivered') {
         document.getElementById('orderEditor')?.remove();
         document.getElementById('orderItemEditor')?.remove();
-        document.querySelectorAll('[data-action="toggleOrderEditor"], [data-action="deleteOrder"]').forEach((button) => button.remove());
+        document.querySelectorAll('[data-action="toggleOrderEditor"]').forEach((button) => button.remove());
         const paymentButton = document.querySelector('[data-action="updatePayment"]');
         paymentButton?.previousElementSibling?.remove();
         paymentButton?.previousElementSibling?.remove();
@@ -1195,6 +1204,7 @@ function checkout() {
         paidAt: amountReceived >= total ? createdAt : '',
         change: Math.max(0, tenderedAmount - total),
         status: amountReceived >= total ? 'paid' : 'partial',
+        bakedAt: '',
         createdAt,
     });
     confirmationOrderId = db.orders[db.orders.length - 1].id;
@@ -1384,11 +1394,20 @@ document.addEventListener('click', (event) => {
         render();
     }
     if (target.dataset.action === 'markBaked') {
-        if (user.role === 'rider') return;
+        if (user.role !== 'admin') return;
         const order = db.orders.find((item) => item.id === Number(target.dataset.orderId));
         if (!order || order.bakedAt) return;
-        if (!confirm(`Mark ${order.receipt} as baked? Its items will be removed from the remaining item count.`)) return;
+        if (!confirm(`Mark ${order.receipt} (${order.customer.name || 'No customer name'}) as baked? Its items will be removed from the remaining item count.`)) return;
         order.bakedAt = new Date().toISOString();
+        persist();
+        render();
+    }
+    if (target.dataset.action === 'markUnbaked') {
+        if (user.role !== 'admin') return;
+        const order = db.orders.find((item) => item.id === Number(target.dataset.orderId));
+        if (!order || !order.bakedAt) return;
+        if (!confirm(`Mark ${order.receipt} (${order.customer.name || 'No customer name'}) as not baked? Its items will be added back to the remaining item count.`)) return;
+        order.bakedAt = '';
         persist();
         render();
     }

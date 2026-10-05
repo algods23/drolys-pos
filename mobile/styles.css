@@ -108,7 +108,9 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .order-list-actions { align-items: center; flex-wrap: nowrap; }
 .baked-button { background: var(--accent); color: var(--ink); }
-.baked-button:disabled { opacity: .65; cursor: default; }
+.not-baked-button { background: #166534; color: #fff; }
+tr.order-baked { background: #dcfce7; }
+tr.order-baked td { border-bottom-color: #86efac; }
 .edit-order { margin: 14px 0; padding: 14px 0; border-top: 1px dashed #9d958a; border-bottom: 1px dashed #9d958a; }
 .edit-order h3 { margin: 0; font-family: Arial, Helvetica, sans-serif; font-size: 16px; }
 .range-summary { margin-top: 12px; }
