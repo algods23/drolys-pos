@@ -166,9 +166,33 @@ function selectedReportOrders() {
     });
 }
 
+function paidCostsForPeriod(start, end) {
+    return db.expenses.filter((expense) => expense.paid
+        && expense.periodStart <= end
+        && expense.periodEnd >= start
+        && ['Utility', 'Payroll'].includes(expense.category));
+}
+
+function reportPeriodStatus() {
+    const paidCosts = paidCostsForPeriod(reportStart, reportEnd);
+    const utilityPaid = paidCosts.some((expense) => expense.category === 'Utility');
+    const payrollPaid = paidCosts.some((expense) => expense.category === 'Payroll');
+    return {
+        utilityPaid,
+        payrollPaid,
+        fullyPaid: utilityPaid && payrollPaid,
+        label: [utilityPaid ? 'utility expenses' : '', payrollPaid ? 'payroll' : ''].filter(Boolean).join(' and '),
+    };
+}
+
 function savePeriodCosts() {
     const utility = Number(utilityExpenseAmount || 0);
     const payroll = Number(payrollExpenseAmount || 0);
+    const status = reportPeriodStatus();
+    if ((status.utilityPaid && utility) || (status.payrollPaid && payroll)) {
+        alert(`This period already has paid ${status.label}. Select a different date range or leave the paid amount blank.`);
+        return;
+    }
     if (utility < 0 || payroll < 0 || (!utility && !payroll)) {
         alert('Enter a utility expense or payroll amount greater than zero.');
         return;
@@ -851,13 +875,16 @@ function reports() {
     const expenseSummary = Object.entries(expensesByDate).sort(([first], [second]) => first.localeCompare(second)).map(([date, dayExpenses]) => `<div class="cart-row"><span>${reportDateLabel(date)}</span><strong>${peso(dayExpenses.reduce((sum, expense) => sum + calculateExpenseTotal(expense), 0))}</strong></div>`).join('');
     const expenseDescriptionSummary = Object.entries(expenseTotalsByDescription(selectedExpenses)).map(([description, total]) => `<div class="cart-row"><span>${description}</span><strong>${peso(total)}</strong></div>`).join('');
     const productPiecesTotal = totalProductPiecesSold(productCounts);
+    const periodStatus = reportPeriodStatus();
+    const newProductPiecesTotal = periodStatus.fullyPaid ? 0 : productPiecesTotal;
     const productSummary = Object.entries(productCounts).sort(([first], [second]) => first.localeCompare(second)).map(([name, count]) => `<div class="cart-row"><span>${name}</span><strong>${count} pcs</strong></div>`).join('');
     const productSummarySection = productSummary
         ? `<div class="products-sold-grid">${productSummary}</div><div class="summary-total"><span>Total pieces sold</span><strong>${productPiecesTotal} pcs</strong></div>`
         : '<p class="hint">No products sold.</p>';
     return `
-        <div class="report-range-row"><label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
-        <section class="panel stack compact-form"><h2>Paid utility and payroll</h2><p class="hint">Using the selected report range (${reportDateLabel(reportStart)} to ${reportDateLabel(reportEnd)}). Paid orders in this range sold <strong>${productPiecesTotal} pcs</strong>.</p><div class="expense-form-pair"><label>Utility expenses <input id="utilityExpenseAmount" type="number" min="0" step="0.01" value="${utilityExpenseAmount}" placeholder="Amount paid"></label><label>Payroll <input id="payrollExpenseAmount" type="number" min="0" step="0.01" value="${payrollExpenseAmount}" placeholder="Amount paid"></label></div><button class="compact-action" data-action="savePeriodCosts">Confirm paid and save</button></section>
+        <div class="report-range-row ${periodStatus.fullyPaid ? 'report-range-paid' : ''}"><label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
+        ${periodStatus.label ? `<div class="notice ${periodStatus.fullyPaid ? 'paid-notice' : ''}">Already paid for this date range: ${periodStatus.label}. ${periodStatus.fullyPaid ? 'Product sold count for a new payment is 0.' : 'Only the unpaid category can be added.'}</div>` : ''}
+        <section class="panel stack compact-form"><h2>Paid utility and payroll</h2><p class="hint">Using the selected report range (${reportDateLabel(reportStart)} to ${reportDateLabel(reportEnd)}). ${periodStatus.fullyPaid ? 'This period is already paid, so no products are counted for a new payment.' : `Products sold for this payment: <strong>${newProductPiecesTotal} pcs</strong>.`}</p><div class="expense-form-pair"><label>Utility expenses <input id="utilityExpenseAmount" type="number" min="0" step="0.01" value="${utilityExpenseAmount}" placeholder="Amount paid" ${periodStatus.utilityPaid ? 'disabled' : ''}></label><label>Payroll <input id="payrollExpenseAmount" type="number" min="0" step="0.01" value="${payrollExpenseAmount}" placeholder="Amount paid" ${periodStatus.payrollPaid ? 'disabled' : ''}></label></div><button class="compact-action" data-action="savePeriodCosts" ${periodStatus.fullyPaid ? 'disabled' : ''}>${periodStatus.fullyPaid ? 'Already paid' : 'Confirm paid and save'}</button></section>
         <section class="panel stack compact-form"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2>${expenseFormMarkup()}<div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong><small class="metric-detail">Cash ${peso(paymentTotals.cash)}</small><small class="metric-detail">GCash ${peso(paymentTotals.gcash)}</small></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${salesRows || '<tr><td>No sales for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${expenseRows || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}

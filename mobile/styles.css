@@ -89,6 +89,9 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 .form-grid { display: grid; gap: 10px; }
 .date-range-row, .report-range-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: end; }
 .report-range-row { grid-template-columns: 1.2fr 1fr 1fr; }
+.report-range-paid input, .report-range-paid select { border-color: #15803d; background: #ecfdf3; color: #166534; }
+.paid-notice { border-color: #86efac; background: #ecfdf3; color: #166534; }
+button:disabled { opacity: .6; cursor: not-allowed; }
 .date-range-row input, .report-range-row input, .report-range-row select { padding: 9px 8px; }
 .choice-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border: 0; padding: 0; margin: 0; }
 .choice-group legend { color: var(--muted); font-size: 13px; padding: 0 0 6px; }
