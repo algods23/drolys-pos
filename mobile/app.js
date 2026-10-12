@@ -92,6 +92,10 @@ db.expenses = (db.expenses || []).map((expense) => ({
     ...expense,
     quantity: Number(expense.quantity || 1),
     amount: Number(expense.amount || 0),
+    category: expense.category || 'Other',
+    periodStart: expense.periodStart || expense.date,
+    periodEnd: expense.periodEnd || expense.date,
+    paid: expense.paid !== false,
 }));
 db.products = db.products.map((product) => ({
     ...product,
@@ -127,6 +131,8 @@ let modalOrderId = null;
 let reportView = 'sales';
 let reportSummaryVisible = false;
 let editingExpenseId = null;
+let utilityExpenseAmount = '';
+let payrollExpenseAmount = '';
 let checkoutFulfillment = 'delivery';
 let confirmationOrderId = null;
 let syncStatus = '';
@@ -150,6 +156,59 @@ function expenseTotalsByDescription(expenses) {
         groups[expense.description] = (groups[expense.description] || 0) + calculateExpenseTotal(expense);
         return groups;
     }, {});
+}
+
+function selectedReportOrders() {
+    return db.orders.filter((order) => {
+        if (!isPaidOrder(order)) return false;
+        const date = reportDate(order);
+        return date >= reportStart && date <= reportEnd;
+    });
+}
+
+function savePeriodCosts() {
+    const utility = Number(utilityExpenseAmount || 0);
+    const payroll = Number(payrollExpenseAmount || 0);
+    if (utility < 0 || payroll < 0 || (!utility && !payroll)) {
+        alert('Enter a utility expense or payroll amount greater than zero.');
+        return;
+    }
+    const labels = [
+        utility ? `Utility expense ${peso(utility)}` : '',
+        payroll ? `Payroll ${peso(payroll)}` : '',
+    ].filter(Boolean).join(' and ');
+    if (!confirm(`Mark ${labels} as paid for ${reportStart} to ${reportEnd} and save it to expenses?`)) return;
+    const saveCost = (category, description, amount) => {
+        if (!amount) return;
+        const existing = db.expenses.find((expense) => expense.category === category
+            && expense.periodStart === reportStart
+            && expense.periodEnd === reportEnd);
+        if (existing) {
+            existing.description = description;
+            existing.amount = amount;
+            existing.quantity = 1;
+            existing.date = reportEnd;
+            existing.paid = true;
+            return;
+        }
+        db.expenses.push({
+            id: Date.now() + db.expenses.length,
+            description,
+            category,
+            quantity: 1,
+            amount,
+            date: reportEnd,
+            periodStart: reportStart,
+            periodEnd: reportEnd,
+            paid: true,
+        });
+    };
+    saveCost('Utility', 'Utility expense', utility);
+    saveCost('Payroll', 'Payroll', payroll);
+    utilityExpenseAmount = '';
+    payrollExpenseAmount = '';
+    persist();
+    render();
 }
 
 function productCategoryOptions() {
@@ -324,9 +383,13 @@ function syncPlugin() {
 }
 
 function createLocalAccessCode() {
+    const savedCode = localStorage.getItem('droolys.local.accessCode');
+    if (savedCode) return savedCode;
     const values = new Uint32Array(2);
     crypto.getRandomValues(values);
-    return Array.from(values, (value) => value.toString(36)).join('').slice(0, 10);
+    const code = Array.from(values, (value) => value.toString(36)).join('').slice(0, 10);
+    localStorage.setItem('droolys.local.accessCode', code);
+    return code;
 }
 
 function localPortalPayload() {
@@ -474,7 +537,7 @@ async function setupRemoteListener() {
 function syncPanel() {
     if (!syncPlugin()) return '';
     if (user.role === 'admin') {
-        const portalDetails = localPortal ? `<div class="local-access"><strong>Local admin address</strong><code>${localPortalUrl()}</code><p class="hint">Open this address on a device using the same Wi-Fi. Keep this phone and the app open.</p><button class="secondary compact-action" data-action="stopLocalDashboard">Stop local access</button></div>` : '';
+        const portalDetails = localPortal ? `<div class="local-access"><strong>Local admin link</strong><a class="local-access-link" href="${localPortalUrl()}" target="_blank" rel="noopener">${localPortalUrl()}</a><p class="hint">This is the same link while local access is running. Open it on a device using the same Wi-Fi. Keep this phone and the app open.</p><button class="secondary compact-action" data-action="stopLocalDashboard">Stop local access</button></div>` : '';
         return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Share all orders scheduled for today with the Rider on the same Wi-Fi.</p><button class="compact-action" data-action="shareTodayOrders">Share today's orders</button>${syncServer ? '<p class="notice">Rider can now find this Admin phone automatically.</p>' : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section><section class="panel stack"><h2>Local admin access</h2><p class="hint">Open your current orders, products, expenses, and sales data on a laptop, PC, or phone using this Wi-Fi only.</p><button class="compact-action" data-action="shareLocalDashboard">${localPortal ? 'Refresh local address' : 'Start local access'}</button>${portalDetails}</section>`;
     }
     return `<section class="panel stack"><h2>Wi-Fi sync</h2><p class="hint">Admin is found automatically while both devices use the same Wi-Fi.</p><div class="row-actions"><button class="compact-action" data-action="receiveTodayOrders">Receive today's orders</button><button class="secondary compact-action" data-action="sendRiderUpdates">Send updates to Admin</button></div>${syncAdmin ? '<p class="notice">Admin found on this Wi-Fi.</p>' : ''}${syncStatus ? `<p class="hint">${syncStatus}</p>` : ''}</section>`;
@@ -766,11 +829,7 @@ function legacyReports() {
 }
 
 function reports() {
-    const orders = db.orders.filter((order) => {
-        if (!isPaidOrder(order)) return false;
-        const date = reportDate(order);
-        return date >= reportStart && date <= reportEnd;
-    });
+    const orders = selectedReportOrders();
     const expenses = db.expenses || [];
     const selectedExpenses = expenses.filter((expense) => expense.date >= reportStart && expense.date <= reportEnd);
     const sales = orders.reduce((sum, order) => sum + salesAmount(order), 0);
@@ -798,6 +857,7 @@ function reports() {
         : '<p class="hint">No products sold.</p>';
     return `
         <div class="report-range-row"><label>Report range <select id="reportRange"><option value="custom">Custom range</option><option value="week">This week</option><option value="month">This month</option></select></label><label>Start date <input type="date" id="reportStart" value="${reportStart}"></label><label>End date <input type="date" id="reportEnd" value="${reportEnd}"></label></div>
+        <section class="panel stack compact-form"><h2>Paid utility and payroll</h2><p class="hint">Using the selected report range (${reportDateLabel(reportStart)} to ${reportDateLabel(reportEnd)}). Paid orders in this range sold <strong>${productPiecesTotal} pcs</strong>.</p><div class="expense-form-pair"><label>Utility expenses <input id="utilityExpenseAmount" type="number" min="0" step="0.01" value="${utilityExpenseAmount}" placeholder="Amount paid"></label><label>Payroll <input id="payrollExpenseAmount" type="number" min="0" step="0.01" value="${payrollExpenseAmount}" placeholder="Amount paid"></label></div><button class="compact-action" data-action="savePeriodCosts">Confirm paid and save</button></section>
         <section class="panel stack compact-form"><h2>${editingExpenseId ? 'Edit expense' : 'Add expense'}</h2>${expenseFormMarkup()}<div class="row-actions"><button class="compact-action" data-action="saveExpense">${editingExpenseId ? 'Update expense' : 'Save expense'}</button>${editingExpenseId ? '<button class="secondary compact-action" data-action="cancelExpenseEdit">Cancel</button>' : ''}</div></section>
         <div class="report-actions"><button class="${reportView === 'sales' ? '' : 'secondary'}" data-action="showSales">Sales</button><button class="${reportView === 'expenses' ? '' : 'secondary'}" data-action="showExpenses">Expenses</button></div>
         ${reportView === 'sales' ? `<section class="panel"><h2>Sales</h2><div class="metric-grid"><div class="metric"><span>Total sales</span><strong>${peso(sales)}</strong><small class="metric-detail">Cash ${peso(paymentTotals.cash)}</small><small class="metric-detail">GCash ${peso(paymentTotals.gcash)}</small></div><div class="metric"><span>Orders</span><strong>${orders.length}</strong></div></div><table><tbody>${salesRows || '<tr><td>No sales for this range.</td></tr>'}</tbody></table></section>` : `<section class="panel"><h2>Expenses</h2><div class="metric"><span>Total expenses</span><strong>${peso(expenseTotal)}</strong></div><table><thead><tr><th>Expense</th><th>Total</th><th></th></tr></thead><tbody>${expenseRows || '<tr><td colspan="3">No expenses for this range.</td></tr>'}</tbody></table></section>`}
@@ -1244,6 +1304,7 @@ document.addEventListener('click', (event) => {
         reportView = 'expenses';
         render();
     }
+    if (target.dataset.action === 'savePeriodCosts') savePeriodCosts();
     if (target.dataset.action === 'toggleReportSummary') {
         reportSummaryVisible = !reportSummaryVisible;
         render();
@@ -1552,6 +1613,8 @@ document.addEventListener('change', (event) => {
 
 document.addEventListener('input', (event) => {
     if (event.target.id === 'deliveryFee') updateCartTotal();
+    if (event.target.id === 'utilityExpenseAmount') utilityExpenseAmount = event.target.value;
+    if (event.target.id === 'payrollExpenseAmount') payrollExpenseAmount = event.target.value;
 });
 
 function updateCartTotal() {
